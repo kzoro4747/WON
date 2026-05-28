@@ -10,7 +10,7 @@ from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로�
 # 1. 페이지 설정 및 현대적인 스타일 정의
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="5가족 모임 정산 계산기 💸",
+    page_title="모임 지출 정산 프로그램 💸",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -120,7 +120,7 @@ to_delete = None
 updated_families = []
 
 for i, fam in enumerate(st.session_state.families_data):
-    col1, col2, col3 = st.sidebar.columns([3, 2, 1])
+    col1, col2, col3 = st.sidebar.columns([3.2, 2.2, 1.2])
     with col1:
         # 가족 이름 설정 (동적 바인딩)
         fam_name = st.text_input(f"가족 {i+1}", value=fam["name"], key=f"fam_name_{i}")
@@ -128,8 +128,8 @@ for i, fam in enumerate(st.session_state.families_data):
         # 가족별 인원수 설정
         fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}")
     with col3:
-        # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 정렬을 정밀하게 맞추기 위해 마진 설정)
-        st.markdown("<div style='margin-top: 18px;'></div>", unsafe_allow_html=True)
+        # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 및 수평 정렬을 정밀하게 맞추기 위해 마진 설정)
+        st.markdown("<div style='margin-top: 18px; margin-left: -10px;'></div>", unsafe_allow_html=True)
         if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제"):
             to_delete = i
     
@@ -148,7 +148,7 @@ if to_delete is not None:
 st.sidebar.markdown("---")
 st.sidebar.write("➕ **새로운 가족 추가**")
 with st.sidebar.form("add_family_form", clear_on_submit=True):
-    add_name = st.text_input("새 가족 이름", placeholder="예: 지원")
+    add_name = st.text_input("새 가족 이름", placeholder="예: 개똥이")
     add_count = st.number_input("가족 인원수", min_value=1, max_value=20, value=4)
     add_btn = st.form_submit_button("가족 추가 👤")
     
@@ -226,7 +226,7 @@ if uploaded_file is not None:
 # -----------------------------------------------------------------------------
 # 4. 메인 화면 UI 레이아웃
 # -----------------------------------------------------------------------------
-st.title(f"💸 {len(families_list)}가족 모임 지출 정산 프로그램")
+st.title("💸 모임 지출 정산 프로그램")
 st.markdown("가족들의 모임 지출을 쉽고 투명하게 계산하고, 송금 경로를 최소화하여 깔끔한 결과를 얻으세요!")
 
 # 계산기 인스턴스 생성 및 세션 상태에 저장된 지출 내역 복원
