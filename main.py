@@ -188,31 +188,39 @@ st.sidebar.download_button(
 # JSON 업로드 기능 (이전 정산 내역 로드)
 uploaded_file = st.sidebar.file_uploader("📂 이전 정산 파일 가져오기", type="json")
 if uploaded_file is not None:
-    try:
-        loaded_data = json.load(uploaded_file)
-        if "families" in loaded_data and "expenses" in loaded_data:
-            # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 관련 세션 키 일괄 제거
-            for key in list(st.session_state.keys()):
-                if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_"):
-                    del st.session_state[key]
-            
-            # 2. 구버전 백업 파일의 누락된 필드(memo, split_by_member 등) 안전 보정
-            for exp in loaded_data["expenses"]:
-                if "memo" not in exp:
-                    exp["memo"] = ""
-                if "split_by_member" not in exp:
-                    exp["split_by_member"] = False
-                    
-            st.session_state.families_data = loaded_data["families"]
-            st.session_state.expenses_data = loaded_data["expenses"]
-            st.session_state.editing_index = None
-            
-            print("[green]백업 데이터 로드 및 누락 필드(memo, split_by_member) 보정 완료[/green]")
-            st.sidebar.success("성공적으로 복구되었습니다! 화면을 새로고침 중입니다.")
-            st.rerun()
-    except Exception as e:
-        st.sidebar.error("올바르지 않은 백업 파일 형식입니다.")
-        print(f"[red]백업 로드 에러:[/red] {str(e)}")
+    # 무한 rerun 루프를 방지하기 위해 파일의 고유 식별 키 생성
+    file_load_key = f"loaded_{uploaded_file.name}_{uploaded_file.size}"
+    
+    # 이 파일을 아직 로드하지 않은 상태일 때만 불러오기 수행
+    if file_load_key not in st.session_state:
+        try:
+            loaded_data = json.load(uploaded_file)
+            if "families" in loaded_data and "expenses" in loaded_data:
+                # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 관련 세션 키 일괄 제거
+                for key in list(st.session_state.keys()):
+                    if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_"):
+                        del st.session_state[key]
+                
+                # 2. 구버전 백업 파일의 누락된 필드(memo, split_by_member 등) 안전 보정
+                for exp in loaded_data["expenses"]:
+                    if "memo" not in exp:
+                        exp["memo"] = ""
+                    if "split_by_member" not in exp:
+                        exp["split_by_member"] = False
+                        
+                st.session_state.families_data = loaded_data["families"]
+                st.session_state.expenses_data = loaded_data["expenses"]
+                st.session_state.editing_index = None
+                
+                # 로드 성공 시 세션 상태에 플래그 기록 (다음 프레임에서 무한 로딩 차단)
+                st.session_state[file_load_key] = True
+                
+                print(f"[green]백업 데이터 로드 성공 및 무한 리런 방지 세팅 완료 (파일명: {uploaded_file.name})[/green]")
+                st.sidebar.success("성공적으로 복구되었습니다! 화면을 새로고침 중입니다.")
+                st.rerun()
+        except Exception as e:
+            st.sidebar.error("올바르지 않은 백업 파일 형식입니다.")
+            print(f"[red]백업 로드 에러:[/red] {str(e)}")
 
 
 # -----------------------------------------------------------------------------
