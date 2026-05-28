@@ -191,9 +191,23 @@ if uploaded_file is not None:
     try:
         loaded_data = json.load(uploaded_file)
         if "families" in loaded_data and "expenses" in loaded_data:
+            # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 관련 세션 키 일괄 제거
+            for key in list(st.session_state.keys()):
+                if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_"):
+                    del st.session_state[key]
+            
+            # 2. 구버전 백업 파일의 누락된 필드(memo, split_by_member 등) 안전 보정
+            for exp in loaded_data["expenses"]:
+                if "memo" not in exp:
+                    exp["memo"] = ""
+                if "split_by_member" not in exp:
+                    exp["split_by_member"] = False
+                    
             st.session_state.families_data = loaded_data["families"]
             st.session_state.expenses_data = loaded_data["expenses"]
-            print("[green]백업 데이터 로드 성공[/green]")
+            st.session_state.editing_index = None
+            
+            print("[green]백업 데이터 로드 및 누락 필드(memo, split_by_member) 보정 완료[/green]")
             st.sidebar.success("성공적으로 복구되었습니다! 화면을 새로고침 중입니다.")
             st.rerun()
     except Exception as e:
