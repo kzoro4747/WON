@@ -17,15 +17,16 @@ class Expense:
     """
     모임 도중 발생한 개별 지출 내역을 저장하는 클래스입니다.
     """
-    def __init__(self, item_name: str, payer_name: str, amount: int, participants: List[str], split_by_member: bool = False):
+    def __init__(self, item_name: str, payer_name: str, amount: int, participants: List[str], split_by_member: bool = False, memo: str = ""):
         self.item_name: str = item_name  # 지출 항목 (예: '숙박비', '첫날 저녁')
         self.payer_name: str = payer_name  # 실제로 돈을 지불한 가족명
         self.amount: int = amount  # 지출 금액 (원)
         self.participants: List[str] = participants  # 이 지출에 참여한 가족들의 이름 목록
         self.split_by_member: bool = split_by_member  # True 이면 참여 인원수 비율로 분담, False 이면 가족수 N분의 1로 분담
+        self.memo: str = memo  # 세부 내역 메모
         
     def __repr__(self) -> str:
-        return f"Expense(item={self.item_name}, payer={self.payer_name}, amount={self.amount}, split_by_member={self.split_by_member})"
+        return f"Expense(item={self.item_name}, payer={self.payer_name}, amount={self.amount}, split_by_member={self.split_by_member}, memo={self.memo})"
 
 
 class SettlementCalculator:
@@ -97,61 +98,44 @@ class SettlementCalculator:
 
     def get_optimal_transfers(self) -> List[Tuple[str, str, int]]:
         """
-        그리디(Greedy) 알고리즘을 사용하여 송금 횟수를 최소화하는 최적의 송금 경로를 도출합니다.
+        대표 수납자(총무) 중심의 1방향 송금 가이드를 도출합니다.
+        가장 지출이 큰 사람(순 잔액이 가장 높은 채권자)을 자동으로 '대표 수납자'로 선정합니다.
+        
+        - 돈을 보내야 하는 모든 사람(채무자)은 '대표 수납자'에게 1번만 송금합니다.
+        - 돈을 돌려받아야 하는 다른 채권자들은 '대표 수납자'로부터 1번만 돌려받습니다.
+        - 결과적으로 총무를 제외한 모든 가족은 정확히 '단 1회'의 거래로 정산이 완료됩니다.
         
         Returns:
             List[Tuple[str, str, int]]: (보내는 사람, 받는 사람, 금액)의 리스트
         """
         balances = self.calculate_balances()
         
-        # 채무자(Debtor, 잔액 < 0)와 채권자(Creditor, 잔액 > 0) 분류
-        debtors: List[Tuple[str, float]] = []
-        creditors: List[Tuple[str, float]] = []
+        if not balances:
+            return []
+            
+        # 순 잔액이 가장 높은 사람을 대표 수납자(총무)로 자동 지정
+        manager_name = max(balances, key=lambda k: balances[k])
+        manager_bal = balances[manager_name]
         
-        # 소수점 오차 방지를 위해 아주 작은 값(1원 미만)은 0으로 처리
-        for name, bal in balances.items():
-            if bal < -0.1:
-                # 계산 편의를 위해 채무액을 양수로 저장
-                debtors.append((name, -bal))
-            elif bal > 0.1:
-                creditors.append((name, bal))
-                
-        # 빚이 많은 순서, 받아야 할 돈이 많은 순서로 정렬
-        debtors.sort(key=lambda x: x[1], reverse=True)
-        creditors.sort(key=lambda x: x[1], reverse=True)
+        print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {manager_name} (잔액: {manager_bal:,.1f}원)")
         
         transfers: List[Tuple[str, str, int]] = []
         
-        debt_idx = 0
-        cred_idx = 0
-        
-        # 채무자와 채권자 목록이 바닥날 때까지 매칭 진행
-        while debt_idx < len(debtors) and cred_idx < len(creditors):
-            debtor_name, debt_amt = debtors[debt_idx]
-            creditor_name, cred_amt = creditors[cred_idx]
-            
-            # 송금액은 채무액과 채권액 중 최소값으로 결정
-            transfer_amount = min(debt_amt, cred_amt)
+        # 다른 모든 멤버들의 정산 가이드 작성
+        for name, bal in balances.items():
+            if name == manager_name:
+                continue
+                
             # 원 단위 반올림 처리
-            final_transfer = int(round(transfer_amount))
+            amount = int(round(bal))
             
-            if final_transfer > 0:
-                transfers.append((debtor_name, creditor_name, final_transfer))
-                print(f"[cyan]정산 송금 매칭:[/cyan] {debtor_name} -> {creditor_name} : {final_transfer:,}원")
+            if amount < 0:
+                # 음수 잔액인 경우: 총무에게 송금
+                transfers.append((name, manager_name, -amount))
+                print(f"[cyan]정산 송금 가이드 (채무):[/cyan] {name} -> {manager_name} : {-amount:,}원")
+            elif amount > 0:
+                # 양수 잔액인 경우: 총무에게서 돌려받음 (총무가 뱉어내는 구조)
+                transfers.append((manager_name, name, amount))
+                print(f"[cyan]정산 송금 가이드 (채권):[/cyan] {manager_name} -> {name} : {amount:,}원")
                 
-            # 잔액 차감 및 인덱스 이동
-            debt_amt -= transfer_amount
-            cred_amt -= transfer_amount
-            
-            if debt_amt < 0.1:
-                debt_idx += 1
-            else:
-                debtors[debt_idx] = (debtor_name, debt_amt)
-                
-            if cred_amt < 0.1:
-                cred_idx += 1
-            else:
-                creditors[cred_idx] = (creditor_name, cred_amt)
-                
-        print(f"[green]최종 송금 경로 도출 완료:[/green] 총 {len(transfers)}건의 거래 발생")
         return transfers

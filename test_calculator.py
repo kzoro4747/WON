@@ -140,13 +140,14 @@ class TestSettlementCalculator(unittest.TestCase):
         self.assertAlmostEqual(balances["정씨네"], -20000.0)
         
         transfers = self.calc.get_optimal_transfers()
-        self.assertEqual(len(transfers), 3)
+        self.assertEqual(len(transfers), 4)
         
-        # 예상 송금 목록 비교 검증
+        # 예상 송금 목록 비교 검증 (총무 김씨네 중심 송금)
         expected_transfers = [
             ("이씨네", "김씨네", 40000),
             ("최씨네", "김씨네", 20000),
-            ("정씨네", "박씨네", 20000)
+            ("정씨네", "김씨네", 20000),
+            ("김씨네", "박씨네", 20000)
         ]
         
         # 순서가 다를 수 있으므로 셋(set)으로 비교

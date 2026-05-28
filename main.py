@@ -100,6 +100,12 @@ if "families_data" not in st.session_state:
 if "expenses_data" not in st.session_state:
     st.session_state.expenses_data = []
 
+if "editing_index" not in st.session_state:
+    st.session_state.editing_index = None
+
+if "last_payer" not in st.session_state:
+    st.session_state.last_payer = "가율"
+
 print("[green]main.py 실행 - 세션 상태 로드 완료[/green]")
 
 
@@ -122,8 +128,8 @@ for i, fam in enumerate(st.session_state.families_data):
         # 가족별 인원수 설정
         fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}")
     with col3:
-        # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 정렬을 정밀하게 맞추기 위해 마진 설정)
+        st.markdown("<div style='margin-top: 24px;'></div>", unsafe_allow_html=True)
         if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제"):
             to_delete = i
     
@@ -210,7 +216,8 @@ for exp_dict in st.session_state.expenses_data:
             payer_name=exp_dict["payer_name"],
             amount=exp_dict["amount"],
             participants=exp_dict["participants"],
-            split_by_member=exp_dict.get("split_by_member", False)
+            split_by_member=exp_dict.get("split_by_member", False),
+            memo=exp_dict.get("memo", "")  # 메모 복원 추가
         )
         calculator.add_expense(expense)
     except Exception as e:
@@ -220,38 +227,76 @@ for exp_dict in st.session_state.expenses_data:
 col_left, col_right = st.columns([5, 6])
 
 # -----------------------------------------------------------------------------
-# 4.1. 왼쪽 컬럼: 신규 지출 등록 및 지출 내역 목록
+# 4.1. 왼쪽 컬럼: 신규 지출 등록 / 수정 및 지출 내역 목록
 # -----------------------------------------------------------------------------
 with col_left:
-    st.subheader("➕ 신규 지출 내역 추가")
+    # 수정 모드 체크 및 타이틀/기본값 로드
+    editing_idx = st.session_state.editing_index
+    is_edit_mode = editing_idx is not None and editing_idx < len(st.session_state.expenses_data)
+    
+    if is_edit_mode:
+        st.subheader(f"📝 지출 내역 수정 (번호: {editing_idx + 1})")
+        # 수정 모드일 때 취소할 수 있는 버튼 제공
+        if st.button("수정 모드 취소 ❌"):
+            st.session_state.editing_index = None
+            st.rerun()
+            
+        edit_exp = st.session_state.expenses_data[editing_idx]
+        default_item = edit_exp["item_name"]
+        default_payer = edit_exp["payer_name"] if edit_exp["payer_name"] in family_names else family_names[0]
+        default_amount = int(edit_exp["amount"])
+        default_split = "참여 인원수 비례 분담" if edit_exp.get("split_by_member", False) else "가족수 기준 균등 분담 (N분의 1)"
+        default_participants = edit_exp["participants"]
+        default_memo = edit_exp.get("memo", "")
+    else:
+        st.subheader("➕ 신규 지출 내역 추가")
+        default_item = ""
+        if "last_payer" in st.session_state and st.session_state.last_payer in family_names:
+            default_payer = st.session_state.last_payer
+        else:
+            default_payer = family_names[0] if family_names else ""
+        default_amount = 0
+        default_split = "가족수 기준 균등 분담 (N분의 1)"
+        default_participants = family_names
+        default_memo = ""
+
     with st.form("expense_input_form", clear_on_submit=True):
         col_item, col_payer = st.columns(2)
         with col_item:
-            item_name = st.text_input("지출 항목명", placeholder="예: 첫날 장보기, 숙박비, 카페")
+            item_name = st.text_input("지출 항목명", value=default_item, placeholder="예: 첫날 장보기, 숙박비, 카페")
         with col_payer:
-            payer_name = st.selectbox("지불한 가족", options=family_names)
+            # 기본값 인덱스 계산
+            payer_index = family_names.index(default_payer) if default_payer in family_names else 0
+            payer_name = st.selectbox("지불한 가족", options=family_names, index=payer_index)
             
         col_amount, col_split = st.columns(2)
         with col_amount:
-            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=0, format="%d")
+            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d")
         with col_split:
+            split_index = 0 if default_split == "가족수 기준 균등 분담 (N분의 1)" else 1
             split_method = st.radio(
                 "분담 기준",
                 options=["가족수 기준 균등 분담 (N분의 1)", "참여 인원수 비례 분담"],
+                index=split_index,
                 help="인원수 비례 분담을 선택하면 각 가족의 머릿수에 비례하여 금액을 책정합니다."
             )
             split_by_member = (split_method == "참여 인원수 비례 분담")
             
+        # 메모 입력 칸 추가
+        memo = st.text_input("메모 (세부내역 등)", value=default_memo, placeholder="예: A동 302호 예약금, 마트 소고기 구입 등")
+        
         st.write("🎯 **지출에 참여한 가족 선택:**")
-        # 기본적으로 모든 가족 체크되게 구성
+        # 체크박스 상태 바인딩
         checkbox_cols = st.columns(len(family_names))
         selected_participants = []
         for idx, name in enumerate(family_names):
             with checkbox_cols[idx]:
-                if st.checkbox(name, value=True, key=f"check_part_{name}"):
+                # 수정 모드라면 해당 지출에 들어있던 멤버인지 여부를 기본값으로 제공
+                is_checked = name in default_participants
+                if st.checkbox(name, value=is_checked, key=f"check_part_{name}"):
                     selected_participants.append(name)
                     
-        submitted = st.form_submit_button("추가하기 💳")
+        submitted = st.form_submit_button("수정 완료 💾" if is_edit_mode else "추가하기 💳")
         
         if submitted:
             if not item_name.strip():
@@ -261,17 +306,26 @@ with col_left:
             elif not selected_participants:
                 st.error("최소 한 팀 이상의 참여 가족을 지정해야 합니다.")
             else:
-                # 세션 데이터에 추가
                 new_expense = {
                     "item_name": item_name.strip(),
                     "payer_name": payer_name,
                     "amount": int(amount),
                     "participants": selected_participants,
-                    "split_by_member": split_by_member
+                    "split_by_member": split_by_member,
+                    "memo": memo.strip()
                 }
-                st.session_state.expenses_data.append(new_expense)
-                print(f"[green]사용자 입력으로 지출 등록됨:[/green] {new_expense}")
-                st.success(f"'{item_name}' 지출 내역이 성공적으로 추가되었습니다!")
+                
+                if is_edit_mode:
+                    st.session_state.expenses_data[editing_idx] = new_expense
+                    st.session_state.editing_index = None # 에디트 모드 종료
+                    st.session_state.last_payer = payer_name # 마지막 지불자 콤보박스 유지
+                    print(f"[green]사용자 조작으로 지출 내역 수정 완료:[/green] {new_expense}")
+                    st.success("지출 내역이 성공적으로 수정되었습니다!")
+                else:
+                    st.session_state.expenses_data.append(new_expense)
+                    st.session_state.last_payer = payer_name # 마지막 지불자 콤보박스 유지
+                    print(f"[green]사용자 입력으로 지출 등록됨:[/green] {new_expense}")
+                    st.success(f"'{item_name}' 지출 내역이 성공적으로 추가되었습니다!")
                 st.rerun()
 
     st.markdown("---")
@@ -280,12 +334,13 @@ with col_left:
     if not st.session_state.expenses_data:
         st.info("등록된 지출 내역이 없습니다. 지출을 추가해 주세요.")
     else:
-        # 데이터프레임 형식으로 지출 내역 시각화
+        # 데이터프레임 형식으로 지출 내역 시각화 (메모 컬럼 추가)
         display_list = []
         for idx, exp in enumerate(st.session_state.expenses_data):
             display_list.append({
                 "번호": idx + 1,
                 "항목명": exp["item_name"],
+                "메모": exp.get("memo", ""),  # 메모 컬럼
                 "지불자": exp["payer_name"],
                 "금액": f"{exp['amount']:,}원",
                 "참여가족": ", ".join(exp["participants"]),
@@ -295,21 +350,34 @@ with col_left:
         df = pd.DataFrame(display_list)
         st.dataframe(df.set_index("번호"), use_container_width=True)
         
-        # 지출 삭제용 드롭다운
-        st.write("🗑️ **지출 내역 삭제:**")
-        del_col1, del_col2 = st.columns([4, 1])
-        with del_col1:
-            delete_target = st.selectbox(
-                "삭제할 지출 선택",
+        # 지출 수정 및 삭제 관리 섹션
+        st.write("🛠️ **지출 내역 관리:**")
+        manage_col1, manage_col2, manage_col3 = st.columns([3, 1, 1])
+        with manage_col1:
+            # 관리 대상 지출 선택 드롭다운
+            selected_target = st.selectbox(
+                "대상 지출 선택",
                 options=[(idx, f"{idx+1}. {exp['item_name']} ({exp['amount']:,}원)") for idx, exp in enumerate(st.session_state.expenses_data)],
-                format_func=lambda x: x[1]
+                format_func=lambda x: x[1],
+                key="expense_manager_select"
             )
-        with del_col2:
-            if st.button("삭제", use_container_width=True):
-                target_idx = delete_target[0]
+        with manage_col2:
+            if st.button("수정", key="edit_btn_active", use_container_width=True):
+                st.session_state.editing_index = selected_target[0]
+                st.rerun()
+        with manage_col3:
+            if st.button("삭제", key="del_btn_active", use_container_width=True):
+                target_idx = selected_target[0]
                 removed = st.session_state.expenses_data.pop(target_idx)
                 print(f"[yellow]사용자 조작으로 지출 삭제됨:[/yellow] {removed}")
                 st.warning(f"'{removed['item_name']}' 지출 내역이 삭제되었습니다.")
+                
+                # 에디팅 모드 인덱스 유효성 조정
+                if st.session_state.editing_index == target_idx:
+                    st.session_state.editing_index = None
+                elif st.session_state.editing_index is not None and st.session_state.editing_index > target_idx:
+                    st.session_state.editing_index -= 1
+                    
                 st.rerun()
 
 
@@ -412,7 +480,8 @@ with col_right:
                 
                 notice_text += f"📊 지출 항목 요약:\n"
                 for idx, exp in enumerate(st.session_state.expenses_data):
-                    notice_text += f" {idx+1}. {exp['item_name']} ({exp['payer_name']} 지불): {exp['amount']:,}원\n"
+                    memo_str = f" [{exp.get('memo')}]" if exp.get("memo") else ""
+                    notice_text += f" {idx+1}. {exp['item_name']}{memo_str} ({exp['payer_name']} 지불): {exp['amount']:,}원\n"
                 notice_text += "\n"
                 
                 notice_text += f"💸 송금 요청 내역 (수수료 절약/최소 거래):\n"
