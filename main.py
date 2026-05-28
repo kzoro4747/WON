@@ -129,7 +129,7 @@ for i, fam in enumerate(st.session_state.families_data):
         fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}")
     with col3:
         # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 정렬을 정밀하게 맞추기 위해 마진 설정)
-        st.markdown("<div style='margin-top: 24px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top: 18px;'></div>", unsafe_allow_html=True)
         if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제"):
             to_delete = i
     
