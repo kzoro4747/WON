@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 from calculator import Family, Expense, SettlementCalculator
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
+from image_generator import generate_settlement_image
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 설정 및 현대적인 스타일 정의
@@ -346,10 +347,13 @@ with col_left:
             if is_edit_mode and edit_exp.get("custom_shares"):
                 saved_shares = edit_exp["custom_shares"]
                 
-            # 여러 개의 열로 나누어 수치 입력 필드 노출
-            share_cols = st.columns(len(selected_participants))
+            # 한 줄에 2개씩 배치하여 충분한 가로폭을 확보하고, squish 현상을 방지합니다.
+            cols_per_row = 2
+            row_cols = None
             for idx, name in enumerate(selected_participants):
-                with share_cols[idx]:
+                if idx % cols_per_row == 0:
+                    row_cols = st.columns(cols_per_row)
+                with row_cols[idx % cols_per_row]:
                     # 기본값은 공평하게 균등 분할
                     even_split = round(100.0 / len(selected_participants), 1)
                     init_share = float(saved_shares.get(name, even_split))
@@ -360,7 +364,8 @@ with col_left:
                         max_value=100.0,
                         step=1.0,
                         value=init_share,
-                        key=f"share_pct_val_{name}"
+                        key=f"share_pct_val_{name}",
+                        format="%.1f"
                     )
                     custom_shares[name] = val
             
@@ -560,8 +565,45 @@ with col_right:
                     """, unsafe_allow_html=True)
                 
                 # -------------------------------------------------------------
-                # 5. 카카오톡/메신저 공유용 텍스트 자동 생성
+                # 5. 정산 결과 이미지 카드 생성 및 다운로드
                 # -------------------------------------------------------------
+                st.markdown("---")
+                st.markdown("#### 📸 **정산 결과 이미지 카드 생성**")
+                st.write("단톡방이나 메신저에 한눈에 보이는 요약 카드로 공유하고 싶으시다면 아래 버튼을 눌러 이미지를 생성하세요.")
+                
+                # 이미지 생성 버튼
+                if st.button("📸 정산 결과 이미지 카드 생성하기", key="btn_generate_image", use_container_width=True):
+                    try:
+                        # 이미지 생성 호출
+                        img_bytes = generate_settlement_image(
+                            families=calculator.families,
+                            expenses=st.session_state.expenses_data,
+                            transfers=optimal_transfers,
+                            total_spent=total_spent
+                        )
+                        
+                        # 화면에 생성된 이미지 미리보기 노출
+                        st.image(img_bytes, caption="생성된 정산 결과 요약 카드 (우클릭하여 복사 가능)", use_container_width=True)
+                        
+                        # 다운로드 버튼 제공
+                        st.download_button(
+                            label="💾 이미지 파일 다운로드 (.png)",
+                            data=img_bytes,
+                            file_name=f"settlement_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                            mime="image/png",
+                            use_container_width=True
+                        )
+                        st.success("🎉 이미지가 성공적으로 생성되었습니다! 다운로드 버튼을 눌러 저장해 주세요.")
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        st.error(f"이미지 생성 중 오류가 발생했습니다: {str(e)}")
+                        print(f"[red]이미지 생성 오류:[/red] {str(e)}")
+                
+                # -------------------------------------------------------------
+                # 6. 카카오톡/메신저 공유용 텍스트 자동 생성
+                # -------------------------------------------------------------
+                st.markdown("---")
                 st.markdown("#### 💬 **카카오톡 공유용 공지 텍스트**")
                 
                 # 텍스트 포맷 생성
