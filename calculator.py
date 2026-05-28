@@ -17,16 +17,17 @@ class Expense:
     """
     모임 도중 발생한 개별 지출 내역을 저장하는 클래스입니다.
     """
-    def __init__(self, item_name: str, payer_name: str, amount: int, participants: List[str], split_by_member: bool = False, memo: str = ""):
+    def __init__(self, item_name: str, payer_name: str, amount: int, participants: List[str], split_by_member: bool = False, memo: str = "", custom_shares: Dict[str, float] = None):
         self.item_name: str = item_name  # 지출 항목 (예: '숙박비', '첫날 저녁')
         self.payer_name: str = payer_name  # 실제로 돈을 지불한 가족명
         self.amount: int = amount  # 지출 금액 (원)
         self.participants: List[str] = participants  # 이 지출에 참여한 가족들의 이름 목록
         self.split_by_member: bool = split_by_member  # True 이면 참여 인원수 비율로 분담, False 이면 가족수 N분의 1로 분담
         self.memo: str = memo  # 세부 내역 메모
+        self.custom_shares: Dict[str, float] = custom_shares  # 사용자 지정 분담 비율 가중치 (가족명 -> 비율가중치)
         
     def __repr__(self) -> str:
-        return f"Expense(item={self.item_name}, payer={self.payer_name}, amount={self.amount}, split_by_member={self.split_by_member}, memo={self.memo})"
+        return f"Expense(item={self.item_name}, payer={self.payer_name}, amount={self.amount}, split_by_member={self.split_by_member}, memo={self.memo}, custom_shares={self.custom_shares})"
 
 
 class SettlementCalculator:
@@ -79,6 +80,16 @@ class SettlementCalculator:
             if not exp.participants:
                 continue
                 
+            # 2.1. 사용자 지정 비율 분담이 정의되어 있는 경우 우선 분배
+            if exp.custom_shares and len(exp.custom_shares) > 0:
+                total_shares = sum(exp.custom_shares.get(p, 0.0) for p in exp.participants)
+                if total_shares > 0:
+                    for p in exp.participants:
+                        share = (exp.custom_shares.get(p, 0.0) / total_shares) * exp.amount
+                        balances[p] -= share
+                continue
+                
+            # 2.2. 기존 기본 분담 로직
             if exp.split_by_member:
                 # 인원수 비례 분담 방식
                 total_members = sum(self.families[p].member_count for p in exp.participants)

@@ -239,7 +239,8 @@ for exp_dict in st.session_state.expenses_data:
             amount=exp_dict["amount"],
             participants=exp_dict["participants"],
             split_by_member=exp_dict.get("split_by_member", False),
-            memo=exp_dict.get("memo", "")  # 메모 복원 추가
+            memo=exp_dict.get("memo", ""),  # 메모 복원 추가
+            custom_shares=exp_dict.get("custom_shares", None)  # 사용자 지정 비율 복원 추가
         )
         calculator.add_expense(expense)
     except Exception as e:
@@ -267,7 +268,15 @@ with col_left:
         default_item = edit_exp["item_name"]
         default_payer = edit_exp["payer_name"] if edit_exp["payer_name"] in family_names else family_names[0]
         default_amount = int(edit_exp["amount"])
-        default_split = "참여 인원수 비례 분담" if edit_exp.get("split_by_member", False) else "가족수 기준 균등 분담 (N분의 1)"
+        
+        # 분담 유형 파싱
+        if edit_exp.get("custom_shares") is not None and len(edit_exp["custom_shares"]) > 0:
+            default_split = "사용자 지정 비율 분담 (%)"
+        elif edit_exp.get("split_by_member", False):
+            default_split = "참여 인원수 비례 분담"
+        else:
+            default_split = "가족수 기준 균등 분담 (N분의 1)"
+            
         default_participants = edit_exp["participants"]
         default_memo = edit_exp.get("memo", "")
     else:
@@ -295,12 +304,18 @@ with col_left:
         with col_amount:
             amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d")
         with col_split:
-            split_index = 0 if default_split == "가족수 기준 균등 분담 (N분의 1)" else 1
+            if default_split == "가족수 기준 균등 분담 (N분의 1)":
+                split_index = 0
+            elif default_split == "참여 인원수 비례 분담":
+                split_index = 1
+            else:
+                split_index = 2
+                
             split_method = st.radio(
                 "분담 기준",
-                options=["가족수 기준 균등 분담 (N분의 1)", "참여 인원수 비례 분담"],
+                options=["가족수 기준 균등 분담 (N분의 1)", "참여 인원수 비례 분담", "사용자 지정 비율 분담 (%)"],
                 index=split_index,
-                help="인원수 비례 분담을 선택하면 각 가족의 머릿수에 비례하여 금액을 책정합니다."
+                help="가족별로 직접 비율(%)을 지정하려면 '사용자 지정 비율 분담 (%)'을 선택하세요."
             )
             split_by_member = (split_method == "참여 인원수 비례 분담")
             
@@ -318,6 +333,41 @@ with col_left:
                 if st.checkbox(name, value=is_checked, key=f"check_part_{name}"):
                     selected_participants.append(name)
                     
+        # 사용자 지정 비율 분담을 위한 % 값 입력 위젯
+        custom_shares = {}
+        if split_method == "사용자 지정 비율 분담 (%)" and len(selected_participants) > 0:
+            st.markdown("##### 📊 **가족별 분담 비율 (%) 직접 입력**")
+            
+            # 이전 저장된 비율 데이터 딕셔너리 불러오기
+            saved_shares = {}
+            if is_edit_mode and edit_exp.get("custom_shares"):
+                saved_shares = edit_exp["custom_shares"]
+                
+            # 여러 개의 열로 나누어 수치 입력 필드 노출
+            share_cols = st.columns(len(selected_participants))
+            for idx, name in enumerate(selected_participants):
+                with share_cols[idx]:
+                    # 기본값은 공평하게 균등 분할
+                    even_split = round(100.0 / len(selected_participants), 1)
+                    init_share = float(saved_shares.get(name, even_split))
+                    
+                    val = st.number_input(
+                        f"{name} (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        step=1.0,
+                        value=init_share,
+                        key=f"share_pct_{name}"
+                    )
+                    custom_shares[name] = val
+            
+            # 입력된 비율의 실시간 합계 출력
+            current_sum = sum(custom_shares.values())
+            if abs(current_sum - 100.0) < 0.01:
+                st.success(f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다! ✅)")
+            else:
+                st.warning(f"현재 비율 합계: **{current_sum:.1f}%** (합계가 정확히 100.0%가 되어야 합니다. ⚠️)")
+                    
         submitted = st.form_submit_button("수정 완료 💾" if is_edit_mode else "추가하기 💳")
         
         if submitted:
@@ -327,6 +377,8 @@ with col_left:
                 st.error("올바른 지출 금액을 입력해주세요.")
             elif not selected_participants:
                 st.error("최소 한 팀 이상의 참여 가족을 지정해야 합니다.")
+            elif split_method == "사용자 지정 비율 분담 (%)" and abs(sum(custom_shares.values()) - 100.0) > 0.01:
+                st.error(f"비율의 합이 {sum(custom_shares.values()):.1f}% 입니다. 사용자 지정 비율 분담 시 비율의 총합은 반드시 정확히 100.0%가 되어야 합니다.")
             else:
                 new_expense = {
                     "item_name": item_name.strip(),
@@ -334,7 +386,8 @@ with col_left:
                     "amount": int(amount),
                     "participants": selected_participants,
                     "split_by_member": split_by_member,
-                    "memo": memo.strip()
+                    "memo": memo.strip(),
+                    "custom_shares": custom_shares if split_method == "사용자 지정 비율 분담 (%)" else None
                 }
                 
                 if is_edit_mode:
@@ -359,6 +412,11 @@ with col_left:
         # 데이터프레임 형식으로 지출 내역 시각화 (메모 컬럼 추가)
         display_list = []
         for idx, exp in enumerate(st.session_state.expenses_data):
+            if exp.get("custom_shares") is not None and len(exp["custom_shares"]) > 0:
+                split_desc = "비율분담(%)"
+            else:
+                split_desc = "인원수비례" if exp.get("split_by_member", False) else "1/N"
+                
             display_list.append({
                 "번호": idx + 1,
                 "항목명": exp["item_name"],
@@ -366,7 +424,7 @@ with col_left:
                 "지불자": exp["payer_name"],
                 "금액": f"{exp['amount']:,}원",
                 "참여가족": ", ".join(exp["participants"]),
-                "정산기준": "인원수비례" if exp.get("split_by_member", False) else "1/N"
+                "정산기준": split_desc
             })
             
         df = pd.DataFrame(display_list)

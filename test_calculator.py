@@ -154,5 +154,44 @@ class TestSettlementCalculator(unittest.TestCase):
         self.assertEqual(set(transfers), set(expected_transfers))
         print("[green]테스트 성공: 복합 지출 정산 검증 완료[/green]")
 
+    def test_custom_ratio_split(self) -> None:
+        """
+        4. 사용자 지정 가중치 비율로 지출을 분담하는 경우를 검증합니다.
+        김씨네가 120,000원을 내고 김씨네, 이씨네, 박씨네가 참여.
+        사용자 지정 비율: 김씨네: 3, 이씨네: 2, 박씨네: 1 (총 6가중치)
+        분담 계산:
+        - 김씨네: 120,000 * 3/6 = 60,000 분담
+        - 이씨네: 120,000 * 2/6 = 40,000 분담
+        - 박씨네: 120,000 * 1/6 = 20,000 분담
+        순 잔액:
+        - 김씨네: 120,000 (지출) - 60,000 = +60,000
+        - 이씨네: 0 - 40,000 = -40,000
+        - 박씨네: 0 - 20,000 = -20,000
+        """
+        print("[magenta]테스트 시작: 사용자 지정 비율 분담[/magenta]")
+        custom_shares = {"김씨네": 3.0, "이씨네": 2.0, "박씨네": 1.0}
+        expense = Expense(
+            item_name="특별 장보기",
+            payer_name="김씨네",
+            amount=120000,
+            participants=["김씨네", "이씨네", "박씨네"],
+            split_by_member=False,
+            custom_shares=custom_shares
+        )
+        self.calc.add_expense(expense)
+        
+        balances = self.calc.calculate_balances()
+        self.assertAlmostEqual(balances["김씨네"], 60000.0)
+        self.assertAlmostEqual(balances["이씨네"], -40000.0)
+        self.assertAlmostEqual(balances["박씨네"], -20000.0)
+        
+        transfers = self.calc.get_optimal_transfers()
+        self.assertEqual(len(transfers), 2) # 이씨네 -> 김씨네, 박씨네 -> 김씨네
+        
+        transfer_dict = {t[0]: t[2] for t in transfers}
+        self.assertEqual(transfer_dict["이씨네"], 40000)
+        self.assertEqual(transfer_dict["박씨네"], 20000)
+        print("[green]테스트 성공: 사용자 지정 비율 분담 검증 완료[/green]")
+
 if __name__ == "__main__":
     unittest.main()
