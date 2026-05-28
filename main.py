@@ -196,9 +196,9 @@ if uploaded_file is not None:
         try:
             loaded_data = json.load(uploaded_file)
             if "families" in loaded_data and "expenses" in loaded_data:
-                # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 관련 세션 키 일괄 제거
+                # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 및 입력 관련 세션 키 일괄 제거
                 for key in list(st.session_state.keys()):
-                    if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_"):
+                    if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_") or key.startswith("share_pct_val_"):
                         del st.session_state[key]
                 
                 # 2. 구버전 백업 파일의 누락된 필드(memo, split_by_member 등) 안전 보정
@@ -291,18 +291,20 @@ with col_left:
         default_participants = family_names
         default_memo = ""
 
-    with st.form("expense_input_form", clear_on_submit=True):
+    # st.form 대신 일반 container를 사용하여 위젯 상태 변경에 따른 실시간 화면 Rerun이 가능하도록 합니다.
+    # 이를 통해 '사용자 지정 비율 분담 (%)'을 선택했을 때 비율 입력 칸이 즉시 하단에 활성화됩니다.
+    with st.container():
         col_item, col_payer = st.columns(2)
         with col_item:
-            item_name = st.text_input("지출 항목명", value=default_item, placeholder="예: 첫날 장보기, 숙박비, 카페")
+            item_name = st.text_input("지출 항목명", value=default_item, placeholder="예: 첫날 장보기, 숙박비, 카페", key="expense_input_item_name")
         with col_payer:
             # 기본값 인덱스 계산
             payer_index = family_names.index(default_payer) if default_payer in family_names else 0
-            payer_name = st.selectbox("지불한 가족", options=family_names, index=payer_index)
+            payer_name = st.selectbox("지불한 가족", options=family_names, index=payer_index, key="expense_input_payer_name")
             
         col_amount, col_split = st.columns(2)
         with col_amount:
-            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d")
+            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d", key="expense_input_amount")
         with col_split:
             if default_split == "가족수 기준 균등 분담 (N분의 1)":
                 split_index = 0
@@ -315,22 +317,23 @@ with col_left:
                 "분담 기준",
                 options=["가족수 기준 균등 분담 (N분의 1)", "참여 인원수 비례 분담", "사용자 지정 비율 분담 (%)"],
                 index=split_index,
+                key="expense_input_split_method",
                 help="가족별로 직접 비율(%)을 지정하려면 '사용자 지정 비율 분담 (%)'을 선택하세요."
             )
             split_by_member = (split_method == "참여 인원수 비례 분담")
             
         # 메모 입력 칸 추가
-        memo = st.text_input("메모 (세부내역 등)", value=default_memo, placeholder="예: A동 302호 예약금, 마트 소고기 구입 등")
+        memo = st.text_input("메모 (세부내역 등)", value=default_memo, placeholder="예: A동 302호 예약금, 마트 소고기 구입 등", key="expense_input_memo")
         
         st.write("🎯 **지출에 참여한 가족 선택:**")
-        # 체크박스 상태 바인딩
+        # 체크박스 상태 바인딩 (key 충돌 및 혼선 방지를 위해 key 형태 보정)
         checkbox_cols = st.columns(len(family_names))
         selected_participants = []
         for idx, name in enumerate(family_names):
             with checkbox_cols[idx]:
                 # 수정 모드라면 해당 지출에 들어있던 멤버인지 여부를 기본값으로 제공
                 is_checked = name in default_participants
-                if st.checkbox(name, value=is_checked, key=f"check_part_{name}"):
+                if st.checkbox(name, value=is_checked, key=f"check_part_box_{name}"):
                     selected_participants.append(name)
                     
         # 사용자 지정 비율 분담을 위한 % 값 입력 위젯
@@ -357,7 +360,7 @@ with col_left:
                         max_value=100.0,
                         step=1.0,
                         value=init_share,
-                        key=f"share_pct_{name}"
+                        key=f"share_pct_val_{name}"
                     )
                     custom_shares[name] = val
             
@@ -368,7 +371,7 @@ with col_left:
             else:
                 st.warning(f"현재 비율 합계: **{current_sum:.1f}%** (합계가 정확히 100.0%가 되어야 합니다. ⚠️)")
                     
-        submitted = st.form_submit_button("수정 완료 💾" if is_edit_mode else "추가하기 💳")
+        submitted = st.button("수정 완료 💾" if is_edit_mode else "추가하기 💳", use_container_width=True)
         
         if submitted:
             if not item_name.strip():
@@ -401,6 +404,20 @@ with col_left:
                     st.session_state.last_payer = payer_name # 마지막 지불자 콤보박스 유지
                     print(f"[green]사용자 입력으로 지출 등록됨:[/green] {new_expense}")
                     st.success(f"'{item_name}' 지출 내역이 성공적으로 추가되었습니다!")
+                
+                # 수동 위젯 상태 클리어 (st.form clear_on_submit 기능 대체)
+                if "expense_input_item_name" in st.session_state:
+                    st.session_state.expense_input_item_name = ""
+                if "expense_input_amount" in st.session_state:
+                    st.session_state.expense_input_amount = 0
+                if "expense_input_memo" in st.session_state:
+                    st.session_state.expense_input_memo = ""
+                
+                # 체크박스 및 퍼센트 가중치 키 캐시 리셋
+                for key in list(st.session_state.keys()):
+                    if key.startswith("check_part_box_") or key.startswith("share_pct_val_"):
+                        del st.session_state[key]
+                        
                 st.rerun()
 
     st.markdown("---")
