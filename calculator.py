@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 
 class Family:
@@ -107,15 +107,19 @@ class SettlementCalculator:
         print(f"[magenta]가족별 순 잔액 계산 완료:[/magenta] {balances}")
         return balances
 
-    def get_optimal_transfers(self) -> List[Tuple[str, str, int]]:
+    def get_optimal_transfers(self, manager_name: Optional[str] = None) -> List[Tuple[str, str, int]]:
         """
         대표 수납자(총무) 중심의 1방향 송금 가이드를 도출합니다.
-        가장 지출이 큰 사람(순 잔액이 가장 높은 채권자)을 자동으로 '대표 수납자'로 선정합니다.
+        사용자가 대표 수납자(manager_name)를 직접 지정할 수 있으며,
+        지정하지 않은 경우(None) 순 잔액이 가장 높은 채권자를 자동으로 '대표 수납자'로 선정합니다.
         
         - 돈을 보내야 하는 모든 사람(채무자)은 '대표 수납자'에게 1번만 송금합니다.
         - 돈을 돌려받아야 하는 다른 채권자들은 '대표 수납자'로부터 1번만 돌려받습니다.
         - 결과적으로 총무를 제외한 모든 가족은 정확히 '단 1회'의 거래로 정산이 완료됩니다.
         
+        Args:
+            manager_name (Optional[str]): 지정할 대표 수납자(총무) 가족명. None이면 자동 선정.
+            
         Returns:
             List[Tuple[str, str, int]]: (보내는 사람, 받는 사람, 금액)의 리스트
         """
@@ -124,29 +128,34 @@ class SettlementCalculator:
         if not balances:
             return []
             
-        # 순 잔액이 가장 높은 사람을 대표 수납자(총무)로 자동 지정
-        manager_name = max(balances, key=lambda k: balances[k])
-        manager_bal = balances[manager_name]
+        # 사용자가 지정한 수납자가 유효한 가족명인지 확인 후 설정, 아니면 최대 채권자로 자동 지정
+        if manager_name and manager_name in balances:
+            selected_manager = manager_name
+            manager_bal = balances[selected_manager]
+            print(f"[cyan]대표 수납자(총무) 수동 지정됨:[/cyan] {selected_manager} (잔액: {manager_bal:,.1f}원)")
+        else:
+            selected_manager = max(balances, key=lambda k: balances[k])
+            manager_bal = balances[selected_manager]
+            print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {selected_manager} (잔액: {manager_bal:,.1f}원)")
         
-        print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {manager_name} (잔액: {manager_bal:,.1f}원)")
+        incoming_transfers: List[Tuple[str, str, int]] = []
+        outgoing_transfers: List[Tuple[str, str, int]] = []
         
-        transfers: List[Tuple[str, str, int]] = []
-        
-        # 다른 모든 멤버들의 정산 가이드 작성
+        # 다른 모든 멤버들의 정산 가이드 작성 (수납 입금 내역 먼저, 이후 환급 내역 순으로 정렬)
         for name, bal in balances.items():
-            if name == manager_name:
+            if name == selected_manager:
                 continue
                 
             # 원 단위 반올림 처리
             amount = int(round(bal))
             
             if amount < 0:
-                # 음수 잔액인 경우: 총무에게 송금
-                transfers.append((name, manager_name, -amount))
-                print(f"[cyan]정산 송금 가이드 (채무):[/cyan] {name} -> {manager_name} : {-amount:,}원")
+                # 음수 잔액인 경우: 총무(수납자)에게 송금
+                incoming_transfers.append((name, selected_manager, -amount))
+                print(f"[cyan]정산 송금 가이드 (수납자에게 입금):[/cyan] {name} -> {selected_manager} : {-amount:,}원")
             elif amount > 0:
-                # 양수 잔액인 경우: 총무에게서 돌려받음 (총무가 뱉어내는 구조)
-                transfers.append((manager_name, name, amount))
-                print(f"[cyan]정산 송금 가이드 (채권):[/cyan] {manager_name} -> {name} : {amount:,}원")
+                # 양수 잔액인 경우: 총무(수납자)에게서 돌려받음 (수납자가 더 쓴 사람에게 환급)
+                outgoing_transfers.append((selected_manager, name, amount))
+                print(f"[cyan]정산 송금 가이드 (수납자가 환급):[/cyan] {selected_manager} -> {name} : {amount:,}원")
                 
-        return transfers
+        return incoming_transfers + outgoing_transfers

@@ -6,6 +6,7 @@ from datetime import datetime
 from calculator import Family, Expense, SettlementCalculator
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 from image_generator import generate_settlement_image
+from auth import check_password, render_logout_button  # 접속 비밀번호 인증 모듈 임포트
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 설정 및 현대적인 스타일 정의
@@ -84,10 +85,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# -----------------------------------------------------------------------------
+# 1.1. 비밀번호 인증 검사 (비공개 정산 내역 보호)
+# -----------------------------------------------------------------------------
+if not check_password():
+    st.stop()
+
 
 # -----------------------------------------------------------------------------
 # 2. 세션 상태 (Session State) 초기화
 # -----------------------------------------------------------------------------
+if "expense_widget_key" not in st.session_state:
+    st.session_state.expense_widget_key = 0
+if "family_widget_key" not in st.session_state:
+    st.session_state.family_widget_key = 0
+
 # 기본값으로 사용자 요청에 맞추어 5가족 기본 데이터 로드 (가율, 소율, 서아, 시윤, 은율)
 if "families_data" not in st.session_state:
     st.session_state.families_data = [
@@ -124,10 +136,10 @@ for i, fam in enumerate(st.session_state.families_data):
     col1, col2, col3 = st.sidebar.columns([3.2, 2.2, 1.2])
     with col1:
         # 가족 이름 설정 (동적 바인딩)
-        fam_name = st.text_input(f"가족 {i+1}", value=fam["name"], key=f"fam_name_{i}")
+        fam_name = st.text_input(f"가족 {i+1}", value=fam["name"], key=f"fam_name_{i}_{st.session_state.family_widget_key}")
     with col2:
         # 가족별 인원수 설정
-        fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}")
+        fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}_{st.session_state.family_widget_key}")
     with col3:
         # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 및 수평 정렬을 정밀하게 맞추기 위해 마진 설정)
         st.markdown("<div style='margin-top: 18px; margin-left: -10px;'></div>", unsafe_allow_html=True)
@@ -197,10 +209,9 @@ if uploaded_file is not None:
         try:
             loaded_data = json.load(uploaded_file)
             if "families" in loaded_data and "expenses" in loaded_data:
-                # 1. UI 위젯 캐시 충돌 방지를 위해 기존 sidebar 및 입력 관련 세션 키 일괄 제거
-                for key in list(st.session_state.keys()):
-                    if key.startswith("fam_name_") or key.startswith("fam_count_") or key.startswith("check_part_") or key.startswith("share_pct_val_"):
-                        del st.session_state[key]
+                # 1. UI 위젯 캐시 충돌 방지를 위해 위젯 키 재생성 플래그 증가
+                st.session_state.family_widget_key += 1
+                st.session_state.expense_widget_key += 1
                 
                 # 2. 구버전 백업 파일의 누락된 필드(memo, split_by_member 등) 안전 보정
                 for exp in loaded_data["expenses"]:
@@ -222,6 +233,9 @@ if uploaded_file is not None:
         except Exception as e:
             st.sidebar.error("올바르지 않은 백업 파일 형식입니다.")
             print(f"[red]백업 로드 에러:[/red] {str(e)}")
+
+# 로그아웃 버튼 배치
+render_logout_button()
 
 
 # -----------------------------------------------------------------------------
@@ -263,6 +277,7 @@ with col_left:
         # 수정 모드일 때 취소할 수 있는 버튼 제공
         if st.button("수정 모드 취소 ❌"):
             st.session_state.editing_index = None
+            st.session_state.expense_widget_key += 1
             st.rerun()
             
         edit_exp = st.session_state.expenses_data[editing_idx]
@@ -297,15 +312,15 @@ with col_left:
     with st.container():
         col_item, col_payer = st.columns(2)
         with col_item:
-            item_name = st.text_input("지출 항목명", value=default_item, placeholder="예: 첫날 장보기, 숙박비, 카페", key="expense_input_item_name")
+            item_name = st.text_input("지출 항목명", value=default_item, placeholder="예: 첫날 장보기, 숙박비, 카페", key=f"expense_input_item_name_{st.session_state.expense_widget_key}")
         with col_payer:
             # 기본값 인덱스 계산
             payer_index = family_names.index(default_payer) if default_payer in family_names else 0
-            payer_name = st.selectbox("지불한 가족", options=family_names, index=payer_index, key="expense_input_payer_name")
+            payer_name = st.selectbox("지불한 가족", options=family_names, index=payer_index, key=f"expense_input_payer_name_{st.session_state.expense_widget_key}")
             
         col_amount, col_split = st.columns(2)
         with col_amount:
-            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d", key="expense_input_amount")
+            amount = st.number_input("지출 금액 (원)", min_value=0, step=1000, value=default_amount, format="%d", key=f"expense_input_amount_{st.session_state.expense_widget_key}")
         with col_split:
             if default_split == "가족수 기준 균등 분담 (N분의 1)":
                 split_index = 0
@@ -318,13 +333,13 @@ with col_left:
                 "분담 기준",
                 options=["가족수 기준 균등 분담 (N분의 1)", "참여 인원수 비례 분담", "사용자 지정 비율 분담 (%)"],
                 index=split_index,
-                key="expense_input_split_method",
+                key=f"expense_input_split_method_{st.session_state.expense_widget_key}",
                 help="가족별로 직접 비율(%)을 지정하려면 '사용자 지정 비율 분담 (%)'을 선택하세요."
             )
             split_by_member = (split_method == "참여 인원수 비례 분담")
             
         # 메모 입력 칸 추가
-        memo = st.text_input("메모 (세부내역 등)", value=default_memo, placeholder="예: A동 302호 예약금, 마트 소고기 구입 등", key="expense_input_memo")
+        memo = st.text_input("메모 (세부내역 등)", value=default_memo, placeholder="예: A동 302호 예약금, 마트 소고기 구입 등", key=f"expense_input_memo_{st.session_state.expense_widget_key}")
         
         st.write("🎯 **지출에 참여한 가족 선택:**")
         # 체크박스 상태 바인딩 (key 충돌 및 혼선 방지를 위해 key 형태 보정)
@@ -334,7 +349,7 @@ with col_left:
             with checkbox_cols[idx]:
                 # 수정 모드라면 해당 지출에 들어있던 멤버인지 여부를 기본값으로 제공
                 is_checked = name in default_participants
-                if st.checkbox(name, value=is_checked, key=f"check_part_box_{name}"):
+                if st.checkbox(name, value=is_checked, key=f"check_part_box_{idx}_{name}_{st.session_state.expense_widget_key}"):
                     selected_participants.append(name)
                     
         # 사용자 지정 비율 분담을 위한 % 값 입력 위젯
@@ -364,7 +379,7 @@ with col_left:
                         max_value=100.0,
                         step=1.0,
                         value=init_share,
-                        key=f"share_pct_val_{name}",
+                        key=f"share_pct_val_{idx}_{name}_{st.session_state.expense_widget_key}",
                         format="%.1f"
                     )
                     custom_shares[name] = val
@@ -410,18 +425,8 @@ with col_left:
                     print(f"[green]사용자 입력으로 지출 등록됨:[/green] {new_expense}")
                     st.success(f"'{item_name}' 지출 내역이 성공적으로 추가되었습니다!")
                 
-                # 수동 위젯 상태 클리어 (st.form clear_on_submit 기능 대체)
-                if "expense_input_item_name" in st.session_state:
-                    st.session_state.expense_input_item_name = ""
-                if "expense_input_amount" in st.session_state:
-                    st.session_state.expense_input_amount = 0
-                if "expense_input_memo" in st.session_state:
-                    st.session_state.expense_input_memo = ""
-                
-                # 체크박스 및 퍼센트 가중치 키 캐시 리셋
-                for key in list(st.session_state.keys()):
-                    if key.startswith("check_part_box_") or key.startswith("share_pct_val_"):
-                        del st.session_state[key]
+                # 위젯 상태 클리어를 위해 key를 재생성 (새로운 위젯으로 인식시켜 초기화)
+                st.session_state.expense_widget_key += 1
                         
                 st.rerun()
 
@@ -435,7 +440,9 @@ with col_left:
         display_list = []
         for idx, exp in enumerate(st.session_state.expenses_data):
             if exp.get("custom_shares") is not None and len(exp["custom_shares"]) > 0:
-                split_desc = "비율분담(%)"
+                shares_dict = exp["custom_shares"]
+                shares_str = ", ".join(f"{p} {float(shares_dict.get(p, 0)):g}%" for p in exp["participants"])
+                split_desc = f"비율분담 ({shares_str})"
             else:
                 split_desc = "인원수비례" if exp.get("split_by_member", False) else "1/N"
                 
@@ -466,6 +473,7 @@ with col_left:
         with manage_col2:
             if st.button("수정", key="edit_btn_active", use_container_width=True):
                 st.session_state.editing_index = selected_target[0]
+                st.session_state.expense_widget_key += 1
                 st.rerun()
         with manage_col3:
             if st.button("삭제", key="del_btn_active", use_container_width=True):
@@ -545,17 +553,34 @@ with col_right:
             st.bar_chart(balance_chart_data.set_index("가족"), color="#38bdf8")
 
         with tab2:
-            st.markdown("#### **최적 송금 가이드 (송금 최소화)**")
+            st.markdown("#### **최적 송금 가이드 (대표 수납자 중심)**")
             
-            optimal_transfers = calculator.get_optimal_transfers()
+            # 대표 수납자(총무) 지정 셀렉트박스 (자동 선정 또는 특정 가족 직접 지정)
+            auto_manager = max(balances, key=lambda k: balances[k]) if balances else ""
+            manager_options = ["자동 선정"] + family_names
+            selected_manager_opt = st.selectbox(
+                "👑 대표 수납자(총무) 지정",
+                options=manager_options,
+                index=0,
+                format_func=lambda opt: f"자동 선정 ({auto_manager} - 최대 채권자)" if opt == "자동 선정" else opt,
+                key="select_settlement_manager",
+                help="지정한 가족이 정산금을 모두 수납받은 뒤, 더 많은 금액을 지출한(돌려받아야 할) 가족에게 다시 송금합니다."
+            )
+            
+            # 실제 수납자 이름 결정
+            active_manager = auto_manager if selected_manager_opt == "자동 선정" else selected_manager_opt
+            optimal_transfers = calculator.get_optimal_transfers(manager_name=active_manager)
             
             if not optimal_transfers:
                 st.success("🎉 모든 가족의 정산 상태가 균형을 이루고 있습니다! 송금할 내역이 없습니다.")
             else:
+                st.caption(f"💡 현재 **[{active_manager}]** 가족이 대표 수납자로 지정되어 정산을 진행합니다.")
                 for debtor, creditor, amt in optimal_transfers:
+                    role_badge = "📥 수납자에게 입금" if creditor == active_manager else "📤 초과 지출자 환급"
                     st.markdown(f"""
                     <div class="transfer-card">
                         <div>
+                            <span style="font-size: 12px; color: #94a3b8; margin-right: 8px;">[{role_badge}]</span>
                             <strong>{debtor}</strong> 
                             <span class="transfer-arrow">➔</span> 
                             <strong>{creditor}</strong>
@@ -563,6 +588,36 @@ with col_right:
                         <div class="transfer-amount">{amt:,} 원</div>
                     </div>
                     """, unsafe_allow_html=True)
+                
+                # 총무(대표 수납자) 기준 받는 금액 / 돌려주는 금액 / 최종 남는 금액 계산 및 표시
+                manager_received = sum(amt for _, cred, amt in optimal_transfers if cred == active_manager)
+                manager_paid_out = sum(amt for debt, _, amt in optimal_transfers if debt == active_manager)
+                manager_remaining = manager_received - manager_paid_out
+                
+                # 총무의 기지출액 및 분담금
+                manager_spent = payer_summary.get(active_manager, 0)
+                manager_share = int(round(payer_summary.get(active_manager, 0) - balances.get(active_manager, 0.0)))
+                
+                if manager_remaining >= 0:
+                    explanation_html = f"💡 <strong>최종 남는 금액 설명:</strong> 총무({active_manager}) 가족이 선결제한 금액(<strong>{manager_spent:,}원</strong>)에서 본인 분담금(<strong>{manager_share:,}원</strong>)을 제외하고 <strong>최종적으로 돌려받는(회수하는) 본인 몫의 정산금</strong>입니다."
+                else:
+                    explanation_html = f"💡 <strong>부족 금액 설명:</strong> 총무({active_manager}) 가족의 본인 분담금(<strong>{manager_share:,}원</strong>)에서 기지출액(<strong>{manager_spent:,}원</strong>)을 제외한 차액(<strong>{-manager_remaining:,}원</strong>)이 수납금 환급 과정에서 충당 완료되었습니다."
+                
+                st.markdown(f"""
+                <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 10px; padding: 16px; margin-top: 12px;">
+                    <div style="font-size: 15px; font-weight: 700; color: #38bdf8; margin-bottom: 8px;">
+                        👑 총무({active_manager}) 최종 정산 요약
+                    </div>
+                    <div style="font-size: 14px; color: #e2e8f0; line-height: 1.7;">
+                        • 총 받는 금액 (수납): <strong>{manager_received:,} 원</strong><br>
+                        • 총 돌려주는 금액 (환급): <strong>{manager_paid_out:,} 원</strong><br>
+                        • 총무에게 최종으로 남는 금액: <strong style="color: #10b981; font-size: 17px;">{manager_remaining:,} 원</strong>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 10px; border-top: 1px dashed #334155; padding-top: 8px; line-height: 1.5;">
+                        {explanation_html}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
                 
                 # -------------------------------------------------------------
                 # 5. 정산 결과 이미지 카드 생성 및 다운로드
@@ -575,11 +630,14 @@ with col_right:
                 if st.button("📸 정산 결과 이미지 카드 생성하기", key="btn_generate_image", use_container_width=True):
                     try:
                         # 이미지 생성 호출
+                        allocated_summary = {name: payer_summary[name] - balances[name] for name in family_names}
                         img_bytes = generate_settlement_image(
                             families=calculator.families,
                             expenses=st.session_state.expenses_data,
                             transfers=optimal_transfers,
-                            total_spent=total_spent
+                            total_spent=total_spent,
+                            allocated_summary=allocated_summary,
+                            manager_name=active_manager
                         )
                         
                         # 화면에 생성된 이미지 미리보기 노출
@@ -610,7 +668,8 @@ with col_right:
                 notice_text = f"📢 [{len(calculator.families)}가족 모임 정산 결과 안내]\n"
                 notice_text += f"━━━━━━━━━━━━━━━━━━━━━\n"
                 notice_text += f"📅 정산일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                notice_text += f"💵 총 지출액: {total_spent:,}원\n\n"
+                notice_text += f"💵 총 지출액: {total_spent:,}원\n"
+                notice_text += f"👑 대표 수납자(총무): {active_manager}\n\n"
                 
                 notice_text += f"👤 가족 구성 정보:\n"
                 for name, fam in calculator.families.items():
@@ -620,12 +679,32 @@ with col_right:
                 notice_text += f"📊 지출 항목 요약:\n"
                 for idx, exp in enumerate(st.session_state.expenses_data):
                     memo_str = f" [{exp.get('memo')}]" if exp.get("memo") else ""
-                    notice_text += f" {idx+1}. {exp['item_name']}{memo_str} ({exp['payer_name']} 지불): {exp['amount']:,}원\n"
+                    participants_list = exp.get("participants", [])
+                    participants_str = ", ".join(participants_list)
+                    if exp.get("custom_shares") is not None and len(exp["custom_shares"]) > 0:
+                        shares_dict = exp["custom_shares"]
+                        shares_str = ", ".join(f"{p} {float(shares_dict.get(p, 0)):g}%" for p in participants_list)
+                        split_info = f"비율분담: {shares_str}" if shares_str else "비율분담"
+                    elif exp.get("split_by_member", False):
+                        member_str = ", ".join(f"{p}({calculator.families[p].member_count}명)" for p in participants_list if p in calculator.families)
+                        split_info = f"인원수비례: {member_str}" if member_str else "인원수비례"
+                    else:
+                        split_info = f"1/N: {participants_str}" if participants_str else "1/N"
+                    notice_text += f" {idx+1}. {exp['item_name']}{memo_str} ({exp['payer_name']} 지불 / {split_info}): {exp['amount']:,}원\n"
                 notice_text += "\n"
                 
-                notice_text += f"💸 송금 요청 내역 (수수료 절약/최소 거래):\n"
+                notice_text += f"💸 송금 요청 내역 ({active_manager} 수납 중심):\n"
                 for debtor, creditor, amt in optimal_transfers:
                     notice_text += f" 👉 {debtor} ➔ {creditor} : {amt:,}원\n"
+                notice_text += "\n"
+                notice_text += f"📌 총무({active_manager}) 최종 정산 요약:\n"
+                notice_text += f" - 받는 금액 합계: {manager_received:,}원\n"
+                notice_text += f" - 돌려주는 금액 합계: {manager_paid_out:,}원\n"
+                notice_text += f" - 총무에게 최종 남는 금액: {manager_remaining:,}원\n"
+                if manager_remaining >= 0:
+                    notice_text += f"   (💡 총무가 선결제한 비용 {manager_spent:,}원에서 본인 분담금 {manager_share:,}원을 제외하고 최종 회수하는 정산금입니다.)\n"
+                else:
+                    notice_text += f"   (💡 총무 본인 분담금 {manager_share:,}원에서 선결제액 {manager_spent:,}원을 제외한 차액 {-manager_remaining:,}원이 충당 완료되었습니다.)\n"
                 notice_text += f"━━━━━━━━━━━━━━━━━━━━━\n"
                 notice_text += f"정산 내역을 확인해 주시고 이상이 없을 시 송금 부탁드립니다. 감사합니다! 🙏"
                 
