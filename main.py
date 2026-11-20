@@ -583,6 +583,9 @@ with col_left:
                 # 에디팅 모드 인덱스 유효성 조정
                 if st.session_state.editing_index == target_idx:
                     st.session_state.editing_index = None
+                    # 수정 중이던 지출을 지운 경우, 입력칸에 남은 그 값으로 '추가하기'를 눌러 되살아나지 않도록
+                    # 위젯 key 세대를 올려 입력폼을 비웁니다. ('수정 모드 취소' 버튼과 같은 방식)
+                    st.session_state.expense_widget_key += 1
                 elif st.session_state.editing_index is not None and st.session_state.editing_index > target_idx:
                     st.session_state.editing_index -= 1
                     
