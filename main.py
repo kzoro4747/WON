@@ -108,6 +108,9 @@ def revert_invalid_family_renames(old_families: List[Dict[str, Any]], new_famili
 # (정수를 넘기면 그 폭으로 시작하며, 작은 화면에서는 자동으로 접히는 "auto" 동작을 따름. 허용 범위 200~600)
 SIDEBAR_WIDTH_PX = 460
 
+# '지출에 참여한 가족 선택' 체크박스를 한 줄에 놓는 최대 개수
+PARTICIPANT_CHECKBOXES_PER_ROW = 3
+
 st.set_page_config(
     page_title="모임 지출 정산 프로그램 💸",
     page_icon="💸",
@@ -179,6 +182,14 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(56, 189, 248, 0.2);
     }
+
+    /* 사이드바 가족 삭제(❌) 버튼: key가 fam_del_* 인 버튼만 대상 (Streamlit이 st-key-<key> 클래스를 붙임)
+       좁은 열에서도 사이드바 밖으로 삐져나가지 않도록 좌우 안쪽 여백과 최소 폭을 줄임 */
+    [class*="st-key-fam_del_"] button {
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+        min-width: 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -239,7 +250,9 @@ updated_families = []
 rename_map: Dict[str, str] = {}  # 이번 rerun에서 이름이 바뀐 가족 {예전 이름: 새 이름}
 
 for i, fam in enumerate(st.session_state.families_data):
-    col1, col2, col3 = st.sidebar.columns([3.2, 2.2, 1.2])
+    # vertical_alignment="bottom": 라벨이 없는 ❌ 버튼을 입력칸 아래쪽 선에 맞춤
+    # (사이드바 폭이 바뀌어도 고정 여백 없이 항상 입력칸과 같은 높이에 놓임)
+    col1, col2, col3 = st.sidebar.columns([3.2, 2.2, 1.2], vertical_alignment="bottom")
     with col1:
         # 가족 이름 설정 (동적 바인딩)
         fam_name = st.text_input(f"가족 {i+1}", value=fam["name"], key=f"fam_name_{i}_{st.session_state.family_widget_key}")
@@ -247,9 +260,9 @@ for i, fam in enumerate(st.session_state.families_data):
         # 가족별 인원수 설정
         fam_count = st.number_input(f"인원수", min_value=1, max_value=20, value=fam["member_count"], key=f"fam_count_{i}_{st.session_state.family_widget_key}")
     with col3:
-        # 공간 패딩용 빈 공간 출력 후 ❌ 버튼 배치 (수직 및 수평 정렬을 정밀하게 맞추기 위해 마진 설정)
-        st.markdown("<div style='margin-top: 18px; margin-left: -10px;'></div>", unsafe_allow_html=True)
-        if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제"):
+        # ❌ 버튼은 열 폭에 맞춰 늘어나고(width="stretch"), 아래 CSS로 안쪽 여백을 줄여
+        # 사이드바를 좁혀도 경계 밖으로 삐져나가지 않게 함 (예전의 margin-top/-left 고정 여백은 폭이 바뀌면 어긋났음)
+        if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제", width="stretch"):
             to_delete = i
     
     # 앞뒤 공백은 이름으로 치지 않음 (새 가족 추가 폼과 같은 기준)
@@ -515,10 +528,13 @@ with col_left:
         
         st.write("🎯 **지출에 참여한 가족 선택:**")
         # 체크박스 상태 바인딩 (key 충돌 및 혼선 방지를 위해 key 형태 보정)
-        checkbox_cols = st.columns(len(family_names))
+        # 한 줄에 최대 PARTICIPANT_CHECKBOXES_PER_ROW개씩 배치: 가족 수만큼 한 줄에 넣으면 사이드바가 넓거나
+        # 창이 좁을 때 칸이 좁아져 이름이 '가/율'처럼 세로로 꺾이므로, 넘치는 가족은 다음 줄로 보냄
         selected_participants = []
         for idx, name in enumerate(family_names):
-            with checkbox_cols[idx]:
+            if idx % PARTICIPANT_CHECKBOXES_PER_ROW == 0:
+                checkbox_cols = st.columns(PARTICIPANT_CHECKBOXES_PER_ROW)
+            with checkbox_cols[idx % PARTICIPANT_CHECKBOXES_PER_ROW]:
                 # 수정 모드라면 해당 지출에 들어있던 멤버인지 여부를 기본값으로 제공
                 is_checked = name in default_participants
                 if st.checkbox(name, value=is_checked, key=f"check_part_box_{idx}_{name}_{st.session_state.expense_widget_key}"):
