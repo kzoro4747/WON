@@ -53,6 +53,7 @@ UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_
 ### 이미지 생성 (`image_generator.py`)
 - Pillow로 1600px 폭, 내용에 따라 높이가 동적으로 계산되는 PNG를 그려 bytes로 반환한다. 높이 계산 블록과 실제 그리기 블록이 분리되어 있어, 레이아웃(행 높이·섹션)을 바꾸면 두 곳을 함께 맞춰야 잘리지 않는다.
 - 폰트: `fonts/Pretendard-*.ttf`(저장소에 포함, 없으면 jsDelivr에서 다운로드) → Windows 시스템 한글 폰트 → PIL 기본 폰트 순으로 fallback.
+- Pretendard에는 이모지가 없어 그대로 그리면 빈 네모가 된다. `draw`는 `_GlyphSafeDraw`로 감싸져 있어 `text()`/`textlength()`에서 폰트에 없는 글자와 ZWJ 같은 서식 문자를 빼고 그린다(화면·공지 텍스트는 원문 유지). 코드에 넣는 고정 문구에도 이모지 대신 `※`, `●`처럼 폰트에 있는 기호를 쓴다.
 
 ## 코딩 규칙
 

@@ -1,5 +1,6 @@
 import os
 import io
+import unicodedata
 import urllib.request
 from datetime import datetime
 from typing import List, Dict, Tuple, Any
@@ -43,9 +44,84 @@ def _ensure_modern_font() -> Tuple[str, str]:
             
     return bold_path, reg_path
 
-def _get_text_width(draw_obj: ImageDraw.ImageDraw, text: str, font: Any) -> int:
+class _GlyphSafeDraw:
+    """
+    ImageDraw를 감싸, 글자를 그리거나 폭을 잴 때 폰트에 없는 글자(이모지 등)를 빼 주는 래퍼입니다.
+
+    Pretendard 등 한글 폰트에는 이모지 글리프가 없어 '🍖고기' 같은 가족명·항목명·메모가 빈 네모로 그려지므로,
+    이미지 카드에서만 그런 글자를 지우고 그립니다. (화면·카카오톡 공지 텍스트에는 이모지가 그대로 남음)
+    text()/textlength() 외의 메서드(line, rectangle, rounded_rectangle 등)는 원래 ImageDraw로 그대로 넘깁니다.
+    """
+
+    def __init__(self, draw: ImageDraw.ImageDraw, check_font: Any) -> None:
+        """
+        Args:
+            draw (ImageDraw.ImageDraw): 실제로 그림을 그릴 ImageDraw 객체
+            check_font (Any): 글리프 유무를 확인할 폰트 (이 이미지에 쓰는 본문 폰트)
+        """
+        self._draw = draw
+        self._check_font = check_font
+        # 폰트에 없는 글자는 .notdef(빈 네모) 글리프로 그려지므로, 할당되지 않은 코드포인트의 모양을 기준으로 비교
+        self._missing_mask = self._mask_bytes("\U000E0000")
+        self._has_glyph_cache: Dict[str, bool] = {}
+        self.removed_chars: set = set()  # 로그 확인용: 이번 이미지에서 빠진 글자
+
+    def _mask_bytes(self, ch: str) -> bytes:
+        """글자 하나를 그렸을 때의 마스크 바이트 (글리프 비교용)."""
+        try:
+            return bytes(self._check_font.getmask(ch))
+        except Exception:
+            return b""
+
+    def _has_glyph(self, ch: str) -> bool:
+        """폰트에 이 글자의 글리프가 있으면 True. 공백·제어 문자는 항상 유지."""
+        if ch.isspace() or ord(ch) < 0x20:
+            return True
+        if ch not in self._has_glyph_cache:
+            self._has_glyph_cache[ch] = self._mask_bytes(ch) != self._missing_mask
+        return self._has_glyph_cache[ch]
+
+    def clean(self, text: str) -> str:
+        """
+        폰트에 없는 글자를 뺀 문자열을 돌려줍니다. 빠진 글자는 removed_chars에 모아 둡니다.
+
+        - 이모지를 잇는 ZWJ(U+200D) 같은 보이지 않는 서식 문자(유니코드 분류 Cf)도 함께 뺍니다.
+        - 뺀 글자 바로 뒤의 공백은, 앞이 비어 있거나 공백·여는 괄호일 때만 함께 뺍니다.
+          (예: '❤️ 맛집' → '맛집', '고기 🍖 파티' → '고기 파티', ' [메모]'처럼 원래 있던 앞 공백은 유지)
+        """
+        kept: List[str] = []
+        just_removed = False
+        for ch in str(text):
+            if unicodedata.category(ch) == "Cf" or not self._has_glyph(ch):
+                self.removed_chars.add(ch)
+                just_removed = True
+                continue
+            if ch == " " and just_removed and (not kept or kept[-1] in " ([{"):
+                just_removed = False
+                continue
+            kept.append(ch)
+            just_removed = False
+        # 끝에서 글자를 뺐다면 그 앞에 남은 공백도 정리 (예: '카페 ☕' → '카페')
+        if just_removed and kept and kept[-1] == " ":
+            kept.pop()
+        return "".join(kept)
+
+    def text(self, xy: Any, text: str, *args: Any, **kwargs: Any) -> None:
+        """폰트에 없는 글자를 뺀 뒤 ImageDraw.text로 그립니다."""
+        self._draw.text(xy, self.clean(text), *args, **kwargs)
+
+    def textlength(self, text: str, *args: Any, **kwargs: Any) -> float:
+        """실제로 그릴 문자열(폰트에 없는 글자 제외)의 폭을 잽니다. 우측 정렬 계산이 그려지는 글자와 맞도록 함."""
+        return self._draw.textlength(self.clean(text), *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._draw, name)
+
+
+def _get_text_width(draw_obj: Any, text: str, font: Any) -> int:
     """
     주어진 텍스트와 폰트의 정확한 렌더링 가로 폭(px)을 반환합니다.
+    draw_obj는 ImageDraw 또는 _GlyphSafeDraw(폰트에 없는 글자를 빼고 잼)입니다.
     """
     try:
         return int(draw_obj.textlength(text, font=font))
@@ -180,8 +256,9 @@ def generate_settlement_image(
     
     # 3. 그라데이션 배경 생성
     image = Image.new("RGB", (width, total_height))
-    draw = ImageDraw.Draw(image)
-    
+    # 가족명·항목명·메모 등에 들어간 이모지처럼 폰트에 없는 글자는 빼고 그리도록 감쌈 (_GlyphSafeDraw 참고)
+    draw = _GlyphSafeDraw(ImageDraw.Draw(image), font_regular)
+
     for y in range(total_height):
         r = int(15 + (30 - 15) * (y / total_height))
         g = int(23 + (41 - 23) * (y / total_height))
@@ -409,5 +486,9 @@ def generate_settlement_image(
     # 10. 이미지 바이트 반환
     img_byte_arr = io.BytesIO()
     image.save(img_byte_arr, format="PNG")
+    if draw.removed_chars:
+        # 콘솔 인코딩 문제를 피하려고 빠진 글자는 코드포인트로 기록
+        removed = ", ".join(f"U+{ord(c):04X}" for c in sorted(draw.removed_chars))
+        print(f"[yellow]이미지에서 폰트에 없는 글자 제외:[/yellow] {removed}")
     print("[green]이미지 생성 성공 및 PNG 변환 완료![/green]")
     return img_byte_arr.getvalue()
