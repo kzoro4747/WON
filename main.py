@@ -103,11 +103,16 @@ def revert_invalid_family_renames(old_families: List[Dict[str, Any]], new_famili
 # -----------------------------------------------------------------------------
 # 1. 페이지 설정 및 현대적인 스타일 정의
 # -----------------------------------------------------------------------------
+# 사이드바 처음 폭(px). Streamlit 기본값(336px)에서는 가족 목록 '인원수' 칸의 -/+ 버튼이 숨고 ❌ 버튼이 잘려 보여 넓힘.
+# Streamlit은 숫자 입력칸 폭이 7.5rem(120px)보다 좁으면 -/+ 버튼을 숨기는데, 460px이면 '인원수' 칸이 약 129px가 됨.
+# (정수를 넘기면 그 폭으로 시작하며, 작은 화면에서는 자동으로 접히는 "auto" 동작을 따름. 허용 범위 200~600)
+SIDEBAR_WIDTH_PX = 460
+
 st.set_page_config(
     page_title="모임 지출 정산 프로그램 💸",
     page_icon="💸",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state=SIDEBAR_WIDTH_PX
 )
 
 # Premium UI 스타일링을 위한 Custom CSS 주입
