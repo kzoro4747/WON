@@ -290,13 +290,20 @@ st.sidebar.download_button(
 
 # JSON 업로드 기능 (이전 정산 내역 로드)
 uploaded_file = st.sidebar.file_uploader("📂 이전 정산 파일 가져오기", type="json")
+
+# 직전 실행에서 복원을 마쳤다면 완료 안내를 한 번 표시 (복원 직후 st.rerun()으로 화면이 다시 그려지므로 1회성 메시지로 전달)
+restored_name = st.session_state.pop("backup_restore_notice", None)
+if restored_name:
+    st.sidebar.success(f"'{restored_name}' 파일로 복원했습니다.")
+
 if uploaded_file is not None:
-    # 무한 rerun 루프를 방지하기 위해 파일의 고유 식별 키 생성
-    file_load_key = f"loaded_{uploaded_file.name}_{uploaded_file.size}"
+    st.sidebar.caption("⚠️ 복원하면 현재 입력된 가족·지출 내역이 이 파일의 내용으로 바뀝니다.")
     
-    # 이 파일을 아직 로드하지 않은 상태일 때만 불러오기 수행
-    if file_load_key not in st.session_state:
+    # 파일을 올리는 것만으로는 덮어쓰지 않고, '복원' 버튼을 누른 실행에서만 불러옵니다.
+    # (버튼 값은 누른 그 실행에서만 True라 무한 rerun 방지용 플래그가 필요 없고, 같은 파일도 몇 번이든 다시 복원 가능)
+    if st.sidebar.button("♻️ 이 파일로 복원", key="restore_backup_btn", use_container_width=True):
         try:
+            uploaded_file.seek(0)  # 이전 실행에서 읽은 위치가 남아 있을 수 있으므로 처음부터 읽음
             loaded_data = json.load(uploaded_file)
             if "families" in loaded_data and "expenses" in loaded_data and not loaded_data["families"]:
                 # 가족 목록이 빈 백업을 불러오면 가족 0팀 상태가 되어 앱이 멈추므로 불러오지 않습니다.
@@ -318,12 +325,15 @@ if uploaded_file is not None:
                 st.session_state.expenses_data = loaded_data["expenses"]
                 st.session_state.editing_index = None
                 
-                # 로드 성공 시 세션 상태에 플래그 기록 (다음 프레임에서 무한 로딩 차단)
-                st.session_state[file_load_key] = True
+                # rerun 뒤 화면에 복원 완료 안내를 띄우기 위한 1회성 메시지
+                st.session_state.backup_restore_notice = uploaded_file.name
                 
-                print(f"[green]백업 데이터 로드 성공 및 무한 리런 방지 세팅 완료 (파일명: {escape(uploaded_file.name)})[/green]")
-                st.sidebar.success("성공적으로 복구되었습니다! 화면을 새로고침 중입니다.")
+                print(f"[green]백업 데이터 복원 성공 (파일명: {escape(uploaded_file.name)})[/green]")
                 st.rerun()
+            else:
+                # 버튼을 눌렀는데 아무 반응이 없지 않도록, 필요한 항목이 없는 파일도 알려 줍니다.
+                st.sidebar.error("올바르지 않은 백업 파일 형식입니다. (families·expenses 항목이 없습니다)")
+                print(f"[yellow]백업 파일 형식 오류 (families/expenses 없음):[/yellow] {escape(uploaded_file.name)}")
         except Exception as e:
             st.sidebar.error("올바르지 않은 백업 파일 형식입니다.")
             print(f"[red]백업 로드 에러:[/red] {escape(str(e))}")
