@@ -371,10 +371,11 @@ def generate_settlement_image(
             draw.line([(110, sum_top + 72), (width - 110, sum_top + 72)], fill=(51, 65, 85), width=1)
             
             # 2행: 최종 남는 금액에 대한 친절한 설명 문구
+            # (Pretendard에는 컬러 이모지가 없어 💡 등은 빈 네모로 그려지므로, 폰트에 있는 ※ 기호를 사용)
             if manager_remaining >= 0:
-                desc_text = f"💡 최종 남는 금액 설명: 총무({manager_name})가 선결제한 비용({manager_spent:,}원)에서 본인 분담금({manager_share:,}원)을 제외하고 최종 회수(환급)받는 본인 몫입니다."
+                desc_text = f"※ 최종 남는 금액 설명: 총무({manager_name})가 선결제한 비용({manager_spent:,}원)에서 본인 분담금({manager_share:,}원)을 제외하고 최종 회수(환급)받는 본인 몫입니다."
             else:
-                desc_text = f"💡 부족 금액 설명: 총무({manager_name}) 본인 분담금({manager_share:,}원)에서 기지출액({manager_spent:,}원)을 제외한 {-manager_remaining:,}원이 충당 완료되었습니다."
+                desc_text = f"※ 부족 금액 설명: 총무({manager_name}) 본인 분담금({manager_share:,}원)에서 기지출액({manager_spent:,}원)을 제외한 {-manager_remaining:,}원이 충당 완료되었습니다."
             draw.text((110, sum_top + 86), desc_text, font=font_small, fill=(148, 163, 184))
             
             current_y += 145
