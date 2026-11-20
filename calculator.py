@@ -3,6 +3,9 @@ from typing import Any, List, Dict, Tuple, Optional
 from rich.markup import escape  # 가족명·항목명 등 사용자 입력이 rich 마크업으로 해석되지 않도록 이스케이프
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 
+# 송금액을 원 단위로 올림/내림할 때 float 계산 오차를 흡수하는 보정값 (예: 19999.9999999 → 20,000원으로 처리)
+TRANSFER_EPSILON = 1e-6
+
 class Family:
     """
     모임에 참여하는 가족 정보를 저장하는 클래스입니다.
@@ -290,16 +293,21 @@ class SettlementCalculator:
             if name == selected_manager:
                 continue
                 
-            # 원 단위 반올림 처리
-            amount = int(round(bal))
-            
-            if amount < 0:
-                # 음수 잔액인 경우: 총무(수납자)에게 송금
-                incoming_transfers.append((name, selected_manager, -amount))
-                print(f"[cyan]정산 송금 가이드 (수납자에게 입금):[/cyan] {escape(name)} -> {escape(selected_manager)} : {-amount:,}원")
-            elif amount > 0:
-                # 양수 잔액인 경우: 총무(수납자)에게서 돌려받음 (수납자가 더 쓴 사람에게 환급)
-                outgoing_transfers.append((selected_manager, name, amount))
-                print(f"[cyan]정산 송금 가이드 (수납자가 환급):[/cyan] {escape(selected_manager)} -> {escape(name)} : {amount:,}원")
+            # 원 단위 처리: 총무는 돈을 걷어 나눠 주는 역할이므로 끝전은 총무에게 남깁니다.
+            #   - 총무에게 보낼 돈은 올림 → 1/N이면 모든 가족이 같은 금액을 보냄 (예: 10,000원 3등분 → 3,334원씩)
+            #   - 총무가 돌려줄 돈은 내림
+            #   (float 오차로 20000.0000001 같은 값이 20001원이 되지 않도록 TRANSFER_EPSILON만큼 보정)
+            if bal < 0:
+                amount = math.ceil(-bal - TRANSFER_EPSILON)
+                if amount > 0:
+                    # 음수 잔액인 경우: 총무(수납자)에게 송금
+                    incoming_transfers.append((name, selected_manager, amount))
+                    print(f"[cyan]정산 송금 가이드 (수납자에게 입금):[/cyan] {escape(name)} -> {escape(selected_manager)} : {amount:,}원")
+            elif bal > 0:
+                amount = math.floor(bal + TRANSFER_EPSILON)
+                if amount > 0:
+                    # 양수 잔액인 경우: 총무(수납자)에게서 돌려받음 (수납자가 더 쓴 사람에게 환급)
+                    outgoing_transfers.append((selected_manager, name, amount))
+                    print(f"[cyan]정산 송금 가이드 (수납자가 환급):[/cyan] {escape(selected_manager)} -> {escape(name)} : {amount:,}원")
                 
         return incoming_transfers + outgoing_transfers

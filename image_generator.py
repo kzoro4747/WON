@@ -372,10 +372,14 @@ def generate_settlement_image(
             
             # 2행: 최종 남는 금액에 대한 친절한 설명 문구
             # (Pretendard에는 컬러 이모지가 없어 💡 등은 빈 네모로 그려지므로, 폰트에 있는 ※ 기호를 사용)
+            # 끝전: 총무에게 보낼 돈은 올림·돌려줄 돈은 내림으로 정하면서 총무에게 더 남는 금액 (main.py의 manager_tail과 같은 식)
+            # 계산식으로 짧게 써서 박스 폭(1줄)을 넘지 않게 하고, 끝전이 있으면 식에 포함해 최종 남는 금액과 맞춤
+            manager_tail = manager_remaining - (manager_spent - manager_share)
+            tail_str = f" + 끝전 {manager_tail:,}원" if manager_tail > 0 else ""
             if manager_remaining >= 0:
-                desc_text = f"※ 최종 남는 금액 설명: 총무({manager_name})가 선결제한 비용({manager_spent:,}원)에서 본인 분담금({manager_share:,}원)을 제외하고 최종 회수(환급)받는 본인 몫입니다."
+                desc_text = f"※ 최종 남는 금액 = 총무({manager_name}) 선결제 {manager_spent:,}원 - 본인 분담금 {manager_share:,}원{tail_str} (최종 회수하는 본인 몫)"
             else:
-                desc_text = f"※ 부족 금액 설명: 총무({manager_name}) 본인 분담금({manager_share:,}원)에서 기지출액({manager_spent:,}원)을 제외한 {-manager_remaining:,}원이 충당 완료되었습니다."
+                desc_text = f"※ 부족 금액 = 총무({manager_name}) 본인 분담금 {manager_share:,}원 - 기지출액 {manager_spent:,}원{tail_str.replace('+', '-')} (환급 과정에서 충당 완료)"
             draw.text((110, sum_top + 86), desc_text, font=font_small, fill=(148, 163, 184))
             
             current_y += 145

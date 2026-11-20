@@ -253,5 +253,35 @@ class TestSettlementCalculator(unittest.TestCase):
         self.assertEqual(self.calc.get_zero_share_fallbacks(), [{"item_name": "간식", "fallback": "1/N"}])
         print("[green]테스트 성공: 비율 합 0% 지출이 1/N으로 대체됨[/green]")
 
+    def test_transfer_rounding_leaves_tail_to_manager(self) -> None:
+        """
+        8. 1/N로 나누어떨어지지 않을 때 끝전이 총무에게 남는지 검증합니다.
+        김씨네가 10,000원을 내고 김·이·박 1/N → 정확히는 3,333.33원씩
+        - 총무가 김씨네면: 이씨네·박씨네가 똑같이 3,334원씩 보냄(올림) → 총무 6,668원 받음
+        - 총무가 이씨네면: 박씨네는 3,334원 보내고(올림), 김씨네는 6,666원 돌려받음(내림)
+        """
+        print("[magenta]테스트 시작: 송금액 올림/내림으로 끝전은 총무에게[/magenta]")
+        self.calc.add_expense(Expense("간식", "김씨네", 10000, ["김씨네", "이씨네", "박씨네"]))
+
+        transfers = self.calc.get_optimal_transfers(manager_name="김씨네")
+        self.assertEqual(set(transfers), {("이씨네", "김씨네", 3334), ("박씨네", "김씨네", 3334)})
+
+        transfers = self.calc.get_optimal_transfers(manager_name="이씨네")
+        self.assertEqual(set(transfers), {("박씨네", "이씨네", 3334), ("이씨네", "김씨네", 6666)})
+        print("[green]테스트 성공: 끝전이 총무에게 남음[/green]")
+
+    def test_transfer_rounding_ignores_float_error(self) -> None:
+        """
+        9. 나누어떨어지는 금액에서 float 오차 때문에 1원이 더 붙지 않는지 검증합니다.
+        0.1원 단위 비율처럼 오차가 생기기 쉬운 값: 김씨네가 30,000원, 3가족 인원수 비례(4·3·2명 → 9명)
+        → 13,333.33 / 10,000 / 6,666.67 이 아니라, 이씨네 몫 10,000원은 정확히 10,000원이어야 함
+        """
+        print("[magenta]테스트 시작: 송금액 float 오차 보정[/magenta]")
+        self.calc.add_expense(Expense("장보기", "김씨네", 30000, ["김씨네", "이씨네", "박씨네"], split_by_member=True))
+        transfers = {t[0]: t[2] for t in self.calc.get_optimal_transfers(manager_name="김씨네")}
+        self.assertEqual(transfers["이씨네"], 10000)
+        self.assertEqual(transfers["박씨네"], 6667)
+        print("[green]테스트 성공: float 오차로 1원이 더 붙지 않음[/green]")
+
 if __name__ == "__main__":
     unittest.main()
