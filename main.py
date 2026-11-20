@@ -700,16 +700,22 @@ with col_right:
         active_manager = selected_manager_opt if selected_manager_opt in family_names else auto_manager
         balances = calculator.calculate_balances(manager_name=active_manager)
 
-        # 원 단위 반올림 차액 안내문 (발생한 지출이 있을 때만 화면·공지 텍스트·이미지에 표시)
-        rounding_notes: List[str] = []
+        # 정산 참고 안내문 (해당하는 지출이 있을 때만 화면·공지 텍스트·이미지 '참고' 영역에 표시)
+        #  - 사용자 지정 비율 분담의 원 단위 반올림 차액
+        #  - 비율 합이 0%라 기본 분담으로 대신 나눈 지출 (백업 파일로만 유입 가능)
+        settlement_notes: List[str] = []
+        for fallback in calculator.get_zero_share_fallbacks():
+            settlement_notes.append(
+                f"'{fallback['item_name']}' 비율 분담: 비율 합이 0%라 {fallback['fallback']}로 나눔"
+            )
         for note in calculator.get_share_rounding_notes(manager_name=active_manager):
             if note["remainder"] > 0:
-                rounding_notes.append(
+                settlement_notes.append(
                     f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 남은 {note['remainder']:,}원은 "
                     f"가장 많이 지출한 {note['receiver']} 가족이 부담"
                 )
             else:
-                rounding_notes.append(
+                settlement_notes.append(
                     f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 넘친 {-note['remainder']:,}원은 "
                     f"가장 많이 지출한 {note['receiver']} 가족 분담금에서 차감"
                 )
@@ -783,8 +789,8 @@ with col_right:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # 비율 분담 원 단위 차액 안내 (발생한 경우에만)
-                for note_text in rounding_notes:
+                # 정산 참고 안내 (원 단위 차액, 비율 합 0% 대체 등 해당할 때만)
+                for note_text in settlement_notes:
                     st.caption(f"※ {note_text}")
 
                 # 총무(대표 수납자) 기준 받는 금액 / 돌려주는 금액 / 최종 남는 금액 계산 및 표시
@@ -836,7 +842,7 @@ with col_right:
                             total_spent=total_spent,
                             allocated_summary=allocated_summary,
                             manager_name=active_manager,
-                            notes=rounding_notes
+                            notes=settlement_notes
                         )
                         
                         # 화면에 생성된 이미지 미리보기 노출
@@ -892,9 +898,9 @@ with col_right:
                     notice_text += f" {idx+1}. {exp['item_name']}{memo_str} ({exp['payer_name']} 지불 / {split_info}): {exp['amount']:,}원\n"
                 notice_text += "\n"
                 
-                if rounding_notes:
-                    notice_text += "※ 원 단위 반올림 안내:\n"
-                    for note_text in rounding_notes:
+                if settlement_notes:
+                    notice_text += "※ 정산 참고:\n"
+                    for note_text in settlement_notes:
                         notice_text += f" - {note_text}\n"
                     notice_text += "\n"
 

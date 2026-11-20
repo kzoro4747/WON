@@ -236,5 +236,22 @@ class TestSettlementCalculator(unittest.TestCase):
         self.assertAlmostEqual(sum(balances.values()), 0.0)
         print("[green]테스트 성공: 동점 시 총무에게 원 단위 차액 반영[/green]")
 
+    def test_custom_ratio_zero_total_falls_back_to_default_split(self) -> None:
+        """
+        7. 비율 합이 0%인 비율 분담 지출(백업 파일로만 유입 가능)을 기본 분담(1/N)으로 대신 나누는지 검증합니다.
+        김씨네가 50,000원 지불, 김·이 비율 0%/0% → 1/N으로 25,000원씩
+        순 잔액: 김씨네 +25,000 / 이씨네 -25,000 (예전에는 김씨네 +50,000만 남아 합계가 맞지 않았음)
+        """
+        print("[magenta]테스트 시작: 비율 합 0% → 기본 분담 대체[/magenta]")
+        zero_shares = {"김씨네": 0.0, "이씨네": 0.0}
+        self.calc.add_expense(Expense("간식", "김씨네", 50000, ["김씨네", "이씨네"], custom_shares=zero_shares))
+
+        balances = self.calc.calculate_balances()
+        self.assertAlmostEqual(balances["김씨네"], 25000.0)
+        self.assertAlmostEqual(balances["이씨네"], -25000.0)
+        self.assertAlmostEqual(sum(balances.values()), 0.0)
+        self.assertEqual(self.calc.get_zero_share_fallbacks(), [{"item_name": "간식", "fallback": "1/N"}])
+        print("[green]테스트 성공: 비율 합 0% 지출이 1/N으로 대체됨[/green]")
+
 if __name__ == "__main__":
     unittest.main()

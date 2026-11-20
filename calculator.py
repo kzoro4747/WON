@@ -119,10 +119,11 @@ class SettlementCalculator:
         Returns:
             Tuple[Dict[str, int], int, Optional[str]]:
                 (가족별 분담액(차액 반영 후), 차액(원, 음수 가능), 차액을 반영한 가족 또는 None(차액 0원))
-                참여 가족 비율 합이 0 이하이면 ({}, 0, None)을 돌려주어 아무에게도 분담하지 않습니다(기존 동작 유지).
+                참여 가족 비율 합이 0 이하이면 ({}, 0, None)을 돌려줍니다.
+                이 경우 calculate_balances()는 기본 분담(1/N 또는 인원수 비례)으로 대신 나눕니다.
         """
         shares_cfg = exp.custom_shares or {}
-        total_shares = sum(shares_cfg.get(p, 0.0) for p in exp.participants)
+        total_shares = self._custom_share_total(exp)
         if total_shares <= 0:
             return {}, 0, None
 
@@ -157,6 +158,32 @@ class SettlementCalculator:
             if remainder != 0 and receiver is not None:
                 notes.append({"item_name": exp.item_name, "remainder": remainder, "receiver": receiver})
         return notes
+
+    @staticmethod
+    def _custom_share_total(exp: "Expense") -> float:
+        """
+        사용자 지정 비율 중 '참여 가족'의 비율만 더한 합계를 돌려줍니다.
+        (참여 가족이 아닌 이름의 비율은 계산에 쓰이지 않으므로 제외)
+        """
+        shares_cfg = exp.custom_shares or {}
+        return sum(shares_cfg.get(p, 0.0) for p in exp.participants)
+
+    def get_zero_share_fallbacks(self) -> List[Dict[str, str]]:
+        """
+        비율 분담인데 참여 가족 비율 합이 0% 이하라 기본 분담으로 대신 계산한 지출 목록을 돌려줍니다. (안내 표시용)
+        화면 입력은 합계 검사로 막히므로, 이런 지출은 백업 파일 복원으로만 들어올 수 있습니다.
+
+        Returns:
+            List[Dict[str, str]]: [{"item_name": 항목명, "fallback": "1/N" 또는 "인원수 비례"}, ...]
+        """
+        fallbacks: List[Dict[str, str]] = []
+        for exp in self.expenses:
+            if exp.participants and exp.custom_shares and self._custom_share_total(exp) <= 0:
+                fallbacks.append({
+                    "item_name": exp.item_name,
+                    "fallback": "인원수 비례" if exp.split_by_member else "1/N",
+                })
+        return fallbacks
 
     def pick_auto_manager(self) -> str:
         """
@@ -197,9 +224,13 @@ class SettlementCalculator:
             #      원 단위로 나누고, 남거나 넘친 금액은 최다 지출 가족(동점 시 총무)에게 반영 (split_custom_shares 참고)
             if exp.custom_shares and len(exp.custom_shares) > 0:
                 shares, _, _ = self.split_custom_shares(exp, manager_name)
-                for p, share in shares.items():
-                    balances[p] -= share
-                continue
+                if shares:
+                    for p, share in shares.items():
+                        balances[p] -= share
+                    continue
+                # 참여 가족 비율 합이 0% 이하(백업 파일로만 유입 가능)면 아무도 분담하지 않아 정산이 어긋나므로,
+                # 아래 기본 분담(인원수 비례 또는 1/N)으로 대신 나눕니다. 안내는 get_zero_share_fallbacks()로 표시.
+                print(f"[yellow]비율 합이 0%라 기본 분담으로 대체:[/yellow] {escape(exp.item_name)}")
                 
             # 2.2. 기존 기본 분담 로직
             if exp.split_by_member:
