@@ -1,6 +1,5 @@
 import os
 import sys
-import inspect
 from datetime import datetime
 from typing import Any, Dict, Tuple
 from rich.console import Console
@@ -20,12 +19,13 @@ def get_console_for_caller() -> Tuple[Console, Console, Any]:
         Tuple[Console, Console, Any]: (터미널용 콘솔, 파일용 콘솔, 오픈된 파일 객체)
     """
     try:
-        # 호출 스택을 탐색하여 print()를 호출한 소스 파일명을 가져옴
-        # stack[0]: get_console_for_caller()
-        # stack[1]: print() (아래 정의된 래퍼 함수)
-        # stack[2]: 실제 로그를 기록하려는 파일 (예: main.py, calculator.py)
-        frame = inspect.stack()[2]
-        caller_file = frame.filename
+        # print()를 호출한 소스 파일명을 가져옴
+        # _getframe(0): get_console_for_caller()
+        # _getframe(1): print() (아래 정의된 래퍼 함수)
+        # _getframe(2): 실제 로그를 기록하려는 파일 (예: main.py, calculator.py)
+        # inspect.stack()은 호출 스택 전체와 소스 줄까지 읽어 Streamlit 안에서 1회 약 3ms가 들므로,
+        # 필요한 프레임 하나만 바로 꺼내는 sys._getframe()을 사용합니다.
+        caller_file = sys._getframe(2).f_code.co_filename
         caller_name = os.path.splitext(os.path.basename(caller_file))[0]
     except Exception:
         # 스택 탐색 실패 시 기본값 지정
