@@ -4,6 +4,8 @@ import inspect
 from datetime import datetime
 from typing import Any, Dict, Tuple
 from rich.console import Console
+from rich.errors import MarkupError
+from rich.text import Text
 
 # 전역 콘솔 및 파일 핸들러 캐시
 # Key: 로그 파일명, Value: (터미널 콘솔, 파일 콘솔, 파일 객체)
@@ -57,11 +59,20 @@ def print(*args: Any, **kwargs: Any) -> None:
     # 로그 타임스탬프 생성
     timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
     
-    # 1. 터미널 출력 (풍부한 스타일 적용을 위해 앞부분에 회색조 타임스탬프 적용)
-    terminal.print(f"[dim]{timestamp}[/dim]", *args, **kwargs)
-    
-    # 2. 파일 출력 (파일에는 마크업 기호나 스타일을 제거하여 텍스트만 기록되도록 함)
-    file_console.print(timestamp, *args, **kwargs)
-    
+    try:
+        # 1. 터미널 출력 (풍부한 스타일 적용을 위해 앞부분에 회색조 타임스탬프 적용)
+        terminal.print(f"[dim]{timestamp}[/dim]", *args, **kwargs)
+
+        # 2. 파일 출력 (파일에는 마크업 기호나 스타일을 제거하여 텍스트만 기록되도록 함)
+        file_console.print(timestamp, *args, **kwargs)
+    except MarkupError:
+        # 3. 안전망: 사용자 입력에 '[/b]'처럼 rich 태그로 보이는 문자열이 이스케이프 없이 섞이면
+        #    마크업 해석이 실패해 앱 전체가 멈춥니다. 로그 때문에 앱이 죽지 않도록 마크업 해석을 끄고
+        #    원문 그대로 다시 출력합니다. (rich는 출력 전에 마크업을 해석하므로 중복 출력은 생기지 않음)
+        #    호출부에서는 사용자 값을 rich.markup.escape()로 감싸는 것이 원칙이며, 이 분기는 누락 대비용입니다.
+        raw_kwargs = {**kwargs, "markup": False}
+        terminal.print(Text(timestamp, style="dim"), *args, **raw_kwargs)
+        file_console.print(timestamp, *args, **raw_kwargs)
+
     # 즉시 파일에 쓰도록 flush
     log_file.flush()

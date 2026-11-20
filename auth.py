@@ -1,6 +1,34 @@
 import hmac
+from typing import Optional
 import streamlit as st
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
+
+# secrets 설정이 전혀 없을 때 사용하는 기본 접속 비밀번호
+DEFAULT_PASSWORD = "1234"
+
+
+def _get_configured_password() -> Optional[str]:
+    """
+    Streamlit Secrets에 설정된 접속 비밀번호를 읽어 옵니다.
+
+    주의:
+        secrets.toml 파일 자체가 없으면 Streamlit 1.57에서는 `"키" in st.secrets` 조회만으로
+        StreamlitSecretNotFoundError(FileNotFoundError의 하위 클래스)가 발생합니다.
+        .streamlit/ 폴더는 gitignore 대상이라 새로 clone한 환경·devcontainer·Secrets 미설정 배포에서
+        이 상황이 생기므로, 예외를 잡아 '설정 없음(None)'으로 처리합니다.
+
+    Returns:
+        Optional[str]: APP_PASSWORD(우선) 또는 password 값. 둘 다 없거나 secrets 파일이 없으면 None.
+    """
+    try:
+        if "APP_PASSWORD" in st.secrets:
+            return str(st.secrets["APP_PASSWORD"])
+        if "password" in st.secrets:
+            return str(st.secrets["password"])
+    except FileNotFoundError:
+        print(f"[yellow]secrets.toml 파일이 없어 기본 비밀번호({DEFAULT_PASSWORD})를 사용합니다.[/yellow]")
+    return None
+
 
 def check_password() -> bool:
     """
@@ -19,14 +47,8 @@ def check_password() -> bool:
         return True
 
     # 2. 설정된 비밀번호 획득 (Streamlit Secrets 우선, 없을 시 기본값 1234)
-    target_password = None
-    if "APP_PASSWORD" in st.secrets:
-        target_password = str(st.secrets["APP_PASSWORD"])
-    elif "password" in st.secrets:
-        target_password = str(st.secrets["password"])
-    else:
-        # secrets 설정이 없을 경우 기본 비밀번호 안내
-        target_password = "1234"
+    configured_password = _get_configured_password()
+    target_password = configured_password if configured_password is not None else DEFAULT_PASSWORD
 
     # 3. 로그인 화면 렌더링 (화면 중앙 정렬 카드 디자인)
     _, center_col, _ = st.columns([1, 1.8, 1])
@@ -53,8 +75,9 @@ def check_password() -> bool:
             login_btn = st.form_submit_button("접속하기 🚀", use_container_width=True)
             
             if login_btn:
-                # 타이밍 공격 방지를 위한 안전한 문자열 비교(hmac.compare_digest)
-                if hmac.compare_digest(input_pw.strip(), target_password.strip()):
+                # 타이밍 공격 방지를 위한 안전한 비교(hmac.compare_digest)
+                # str끼리 비교하면 한글 등 ASCII 밖의 문자가 섞였을 때 TypeError가 나므로 UTF-8 바이트로 비교합니다.
+                if hmac.compare_digest(input_pw.strip().encode("utf-8"), target_password.strip().encode("utf-8")):
                     st.session_state["authenticated"] = True
                     print("[green]비밀번호 인증 성공: 메인 화면으로 진입합니다.[/green]")
                     st.rerun()
@@ -63,7 +86,7 @@ def check_password() -> bool:
                     print(f"[red]비밀번호 인증 실패:[/red] 잘못된 비밀번호 입력 시도")
                     st.error("❌ 비밀번호가 올바르지 않습니다. 다시 입력해주세요.")
                     
-        if "APP_PASSWORD" not in st.secrets and "password" not in st.secrets:
+        if configured_password is None:
             st.info("💡 기본 비밀번호는 **`1234`** 로 설정되어 있습니다. (온라인 배포 시 Secrets에서 변경 가능)")
             
     return False

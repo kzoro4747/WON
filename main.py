@@ -3,10 +3,65 @@ import pandas as pd
 import json
 from typing import List, Dict, Any
 from datetime import datetime
+from rich.markup import escape  # 사용자 입력(가족명·항목명 등)이 rich 마크업으로 해석되지 않도록 이스케이프
 from calculator import Family, Expense, SettlementCalculator
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 from image_generator import generate_settlement_image
 from auth import check_password, render_logout_button  # 접속 비밀번호 인증 모듈 임포트
+
+
+# -----------------------------------------------------------------------------
+# 0. 가족 목록 ↔ 지출 내역 정합성 유지 헬퍼
+#    지출 dict는 가족을 '이름'으로만 참조하므로, 가족 이름이 바뀌거나 가족이 삭제되면
+#    지출 쪽도 함께 맞춰 주지 않으면 정산 계산에서 지출이 빠지거나 KeyError가 발생합니다.
+# -----------------------------------------------------------------------------
+def apply_family_renames(expenses: List[Dict[str, Any]], rename_map: Dict[str, str]) -> int:
+    """
+    가족 이름 변경 내역을 지출 목록 전체에 반영합니다. (리스트 안의 dict를 제자리에서 수정)
+
+    갱신 대상:
+        - payer_name   : 지불한 가족
+        - participants : 참여 가족 목록
+        - custom_shares: 사용자 지정 비율의 키(가족명)
+
+    Args:
+        expenses (List[Dict[str, Any]]): st.session_state.expenses_data
+        rename_map (Dict[str, str]): {예전 이름: 새 이름}. 한 번의 rerun에서 바뀐 이름들을 동시에 적용하므로
+            A→B, B→A처럼 서로 맞바꾸는 경우에도 연쇄 치환이 일어나지 않습니다.
+
+    Returns:
+        int: 이름이 하나라도 치환된 지출 건수 (로그 확인용)
+    """
+    changed_count = 0
+    for exp in expenses:
+        if exp["payer_name"] not in rename_map and not any(p in rename_map for p in exp["participants"]):
+            continue
+        exp["payer_name"] = rename_map.get(exp["payer_name"], exp["payer_name"])
+        exp["participants"] = [rename_map.get(p, p) for p in exp["participants"]]
+        if exp.get("custom_shares"):
+            exp["custom_shares"] = {rename_map.get(k, k): v for k, v in exp["custom_shares"].items()}
+        changed_count += 1
+    return changed_count
+
+
+def find_expenses_using_family(expenses: List[Dict[str, Any]], family_name: str) -> List[str]:
+    """
+    특정 가족이 지불자 또는 참여자로 들어 있는 지출의 항목명 목록을 돌려줍니다.
+    가족 삭제 전에 호출하여, 사용 중인 가족이 삭제되어 지출이 정산에서 빠지는 일을 막는 데 씁니다.
+
+    Args:
+        expenses (List[Dict[str, Any]]): st.session_state.expenses_data
+        family_name (str): 확인할 가족명
+
+    Returns:
+        List[str]: 해당 가족을 참조하는 지출의 item_name 목록 (없으면 빈 리스트)
+    """
+    return [
+        exp["item_name"]
+        for exp in expenses
+        if exp["payer_name"] == family_name or family_name in exp["participants"]
+    ]
+
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 설정 및 현대적인 스타일 정의
@@ -131,6 +186,7 @@ st.sidebar.write("가족 목록을 수정, 추가 또는 삭제할 수 있습니
 # 가족 삭제 작업 처리
 to_delete = None
 updated_families = []
+rename_map: Dict[str, str] = {}  # 이번 rerun에서 이름이 바뀐 가족 {예전 이름: 새 이름}
 
 for i, fam in enumerate(st.session_state.families_data):
     col1, col2, col3 = st.sidebar.columns([3.2, 2.2, 1.2])
@@ -147,15 +203,40 @@ for i, fam in enumerate(st.session_state.families_data):
             to_delete = i
     
     updated_families.append({"name": fam_name, "member_count": fam_count})
+    if fam_name != fam["name"]:
+        rename_map[fam["name"]] = fam_name
 
 # 변경된 리스트 실시간 반영
 st.session_state.families_data = updated_families
 
+# 가족 이름이 바뀐 경우 지출 내역(지불자/참여자/비율)에도 새 이름을 반영
+if rename_map:
+    renamed_expense_count = apply_family_renames(st.session_state.expenses_data, rename_map)
+    if st.session_state.last_payer in rename_map:
+        st.session_state.last_payer = rename_map[st.session_state.last_payer]
+    # 직접 지정해 둔 대표 수납자(총무)도 새 이름을 따라가도록 갱신 (위젯 생성 전이므로 값 변경 가능)
+    if st.session_state.get("select_settlement_manager") in rename_map:
+        st.session_state.select_settlement_manager = rename_map[st.session_state.select_settlement_manager]
+    print(f"[green]사용자 조작으로 가족 이름 변경됨:[/green] {escape(str(rename_map))} (지출 {renamed_expense_count}건에 반영)")
+
 # 삭제 버튼이 클릭되었을 때의 처리
 if to_delete is not None:
-    deleted_fam = st.session_state.families_data.pop(to_delete)
-    print(f"[yellow]사용자 조작으로 가족 삭제됨:[/yellow] {deleted_fam['name']}")
-    st.rerun()
+    target_name = st.session_state.families_data[to_delete]["name"]
+    used_in = find_expenses_using_family(st.session_state.expenses_data, target_name)
+    if used_in:
+        # 지출에서 사용 중인 가족을 지우면 해당 지출이 정산에서 빠지거나 KeyError가 나므로 삭제를 막습니다.
+        st.sidebar.error(
+            f"'{target_name}' 가족은 지출 {len(used_in)}건({', '.join(used_in)})에 지불자나 참여자로 들어 있어 삭제할 수 없습니다. "
+            "해당 지출을 먼저 수정하거나 삭제해 주세요."
+        )
+        print(f"[yellow]가족 삭제 차단 (지출에서 사용 중):[/yellow] {escape(target_name)} → {escape(', '.join(used_in))}")
+    else:
+        deleted_fam = st.session_state.families_data.pop(to_delete)
+        # 가족 입력 위젯 key가 목록 위치(i) 기반이라, key를 갱신하지 않으면 삭제된 가족의 값이
+        # 같은 위치의 다음 가족 칸에 남아 다시 저장됩니다(엉뚱한 가족이 지워지는 버그). 위젯을 새로 만들도록 key 세대를 올립니다.
+        st.session_state.family_widget_key += 1
+        print(f"[yellow]사용자 조작으로 가족 삭제됨:[/yellow] {escape(deleted_fam['name'])}")
+        st.rerun()
 
 # 새 가족 추가 폼
 st.sidebar.markdown("---")
@@ -175,7 +256,7 @@ with st.sidebar.form("add_family_form", clear_on_submit=True):
                 "name": add_name.strip(),
                 "member_count": int(add_count)
             })
-            print(f"[green]사용자 조작으로 가족 추가됨:[/green] {add_name} ({add_count}명)")
+            print(f"[green]사용자 조작으로 가족 추가됨:[/green] {escape(add_name)} ({add_count}명)")
             st.rerun()
 
 # 계산기 도메인용 객체 리스트 생성
@@ -227,12 +308,12 @@ if uploaded_file is not None:
                 # 로드 성공 시 세션 상태에 플래그 기록 (다음 프레임에서 무한 로딩 차단)
                 st.session_state[file_load_key] = True
                 
-                print(f"[green]백업 데이터 로드 성공 및 무한 리런 방지 세팅 완료 (파일명: {uploaded_file.name})[/green]")
+                print(f"[green]백업 데이터 로드 성공 및 무한 리런 방지 세팅 완료 (파일명: {escape(uploaded_file.name)})[/green]")
                 st.sidebar.success("성공적으로 복구되었습니다! 화면을 새로고침 중입니다.")
                 st.rerun()
         except Exception as e:
             st.sidebar.error("올바르지 않은 백업 파일 형식입니다.")
-            print(f"[red]백업 로드 에러:[/red] {str(e)}")
+            print(f"[red]백업 로드 에러:[/red] {escape(str(e))}")
 
 # 로그아웃 버튼 배치
 render_logout_button()
@@ -246,6 +327,7 @@ st.markdown("가족들의 모임 지출을 쉽고 투명하게 계산하고, 송
 
 # 계산기 인스턴스 생성 및 세션 상태에 저장된 지출 내역 복원
 calculator = SettlementCalculator(families_list)
+skipped_expenses: List[str] = []  # 존재하지 않는 가족을 참조해 정산 계산에서 빠진 지출 항목명
 for exp_dict in st.session_state.expenses_data:
     try:
         expense = Expense(
@@ -259,7 +341,15 @@ for exp_dict in st.session_state.expenses_data:
         )
         calculator.add_expense(expense)
     except Exception as e:
-        print(f"[red]지출 복원 에러:[/red] {str(e)}")
+        skipped_expenses.append(str(exp_dict.get("item_name", "?")))
+        print(f"[red]지출 복원 에러:[/red] {escape(str(e))}")
+
+# 백업 파일 등으로 목록에 없는 가족을 참조하는 지출이 들어온 경우, 조용히 빠지지 않도록 화면에 알림
+if skipped_expenses:
+    st.warning(
+        f"⚠️ 가족 목록에 없는 가족이 들어 있는 지출 {len(skipped_expenses)}건({', '.join(skipped_expenses)})은 "
+        "정산 계산에서 제외되었습니다. 해당 지출을 수정하거나 삭제해 주세요."
+    )
 
 # 좌우 레이아웃 분할
 col_left, col_right = st.columns([5, 6])
@@ -417,12 +507,12 @@ with col_left:
                     st.session_state.expenses_data[editing_idx] = new_expense
                     st.session_state.editing_index = None # 에디트 모드 종료
                     st.session_state.last_payer = payer_name # 마지막 지불자 콤보박스 유지
-                    print(f"[green]사용자 조작으로 지출 내역 수정 완료:[/green] {new_expense}")
+                    print(f"[green]사용자 조작으로 지출 내역 수정 완료:[/green] {escape(str(new_expense))}")
                     st.success("지출 내역이 성공적으로 수정되었습니다!")
                 else:
                     st.session_state.expenses_data.append(new_expense)
                     st.session_state.last_payer = payer_name # 마지막 지불자 콤보박스 유지
-                    print(f"[green]사용자 입력으로 지출 등록됨:[/green] {new_expense}")
+                    print(f"[green]사용자 입력으로 지출 등록됨:[/green] {escape(str(new_expense))}")
                     st.success(f"'{item_name}' 지출 내역이 성공적으로 추가되었습니다!")
                 
                 # 위젯 상태 클리어를 위해 key를 재생성 (새로운 위젯으로 인식시켜 초기화)
@@ -479,7 +569,7 @@ with col_left:
             if st.button("삭제", key="del_btn_active", use_container_width=True):
                 target_idx = selected_target[0]
                 removed = st.session_state.expenses_data.pop(target_idx)
-                print(f"[yellow]사용자 조작으로 지출 삭제됨:[/yellow] {removed}")
+                print(f"[yellow]사용자 조작으로 지출 삭제됨:[/yellow] {escape(str(removed))}")
                 st.warning(f"'{removed['item_name']}' 지출 내역이 삭제되었습니다.")
                 
                 # 에디팅 모드 인덱스 유효성 조정
@@ -511,9 +601,10 @@ with col_right:
         st.info("지출 내역을 입력하시면 정산 요약 대시보드가 활성화됩니다.")
     else:
         # 가족별 총 지불액 계산
+        # (계산기가 받아들인 지출만 집계: 목록에 없는 가족을 참조하는 지출은 KeyError 없이 제외되며 위에서 경고 표시)
         payer_summary = {name: 0 for name in family_names}
-        for exp in st.session_state.expenses_data:
-            payer_summary[exp["payer_name"]] += exp["amount"]
+        for exp_obj in calculator.expenses:
+            payer_summary[exp_obj.payer_name] += exp_obj.amount
             
         # 순 잔액(Net Balance) 계산
         balances = calculator.calculate_balances()
@@ -656,7 +747,7 @@ with col_right:
                         import traceback
                         traceback.print_exc()
                         st.error(f"이미지 생성 중 오류가 발생했습니다: {str(e)}")
-                        print(f"[red]이미지 생성 오류:[/red] {str(e)}")
+                        print(f"[red]이미지 생성 오류:[/red] {escape(str(e))}")
                 
                 # -------------------------------------------------------------
                 # 6. 카카오톡/메신저 공유용 텍스트 자동 생성

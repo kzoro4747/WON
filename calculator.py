@@ -1,4 +1,5 @@
 from typing import List, Dict, Tuple, Optional
+from rich.markup import escape  # 가족명·항목명 등 사용자 입력이 rich 마크업으로 해석되지 않도록 이스케이프
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 
 class Family:
@@ -50,7 +51,7 @@ class SettlementCalculator:
                 raise ValueError(f"존재하지 않는 가족명(참여자): {p}")
                 
         self.expenses.append(expense)
-        print(f"[blue]지출 추가됨:[/blue] {expense.item_name} | 지불자: {expense.payer_name} | 금액: {expense.amount:,}원 | 참여가족: {len(expense.participants)}가구")
+        print(f"[blue]지출 추가됨:[/blue] {escape(expense.item_name)} | 지불자: {escape(expense.payer_name)} | 금액: {expense.amount:,}원 | 참여가족: {len(expense.participants)}가구")
 
     def remove_expense(self, index: int) -> None:
         """
@@ -58,7 +59,7 @@ class SettlementCalculator:
         """
         if 0 <= index < len(self.expenses):
             removed = self.expenses.pop(index)
-            print(f"[yellow]지출 삭제됨:[/yellow] {removed.item_name} ({removed.amount:,}원)")
+            print(f"[yellow]지출 삭제됨:[/yellow] {escape(removed.item_name)} ({removed.amount:,}원)")
         else:
             raise IndexError("유효하지 않은 지출 인덱스입니다.")
 
@@ -104,7 +105,7 @@ class SettlementCalculator:
                 for p in exp.participants:
                     balances[p] -= family_share
                     
-        print(f"[magenta]가족별 순 잔액 계산 완료:[/magenta] {balances}")
+        print(f"[magenta]가족별 순 잔액 계산 완료:[/magenta] {escape(str(balances))}")
         return balances
 
     def get_optimal_transfers(self, manager_name: Optional[str] = None) -> List[Tuple[str, str, int]]:
@@ -132,11 +133,11 @@ class SettlementCalculator:
         if manager_name and manager_name in balances:
             selected_manager = manager_name
             manager_bal = balances[selected_manager]
-            print(f"[cyan]대표 수납자(총무) 수동 지정됨:[/cyan] {selected_manager} (잔액: {manager_bal:,.1f}원)")
+            print(f"[cyan]대표 수납자(총무) 수동 지정됨:[/cyan] {escape(selected_manager)} (잔액: {manager_bal:,.1f}원)")
         else:
             selected_manager = max(balances, key=lambda k: balances[k])
             manager_bal = balances[selected_manager]
-            print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {selected_manager} (잔액: {manager_bal:,.1f}원)")
+            print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {escape(selected_manager)} (잔액: {manager_bal:,.1f}원)")
         
         incoming_transfers: List[Tuple[str, str, int]] = []
         outgoing_transfers: List[Tuple[str, str, int]] = []
@@ -152,10 +153,10 @@ class SettlementCalculator:
             if amount < 0:
                 # 음수 잔액인 경우: 총무(수납자)에게 송금
                 incoming_transfers.append((name, selected_manager, -amount))
-                print(f"[cyan]정산 송금 가이드 (수납자에게 입금):[/cyan] {name} -> {selected_manager} : {-amount:,}원")
+                print(f"[cyan]정산 송금 가이드 (수납자에게 입금):[/cyan] {escape(name)} -> {escape(selected_manager)} : {-amount:,}원")
             elif amount > 0:
                 # 양수 잔액인 경우: 총무(수납자)에게서 돌려받음 (수납자가 더 쓴 사람에게 환급)
                 outgoing_transfers.append((selected_manager, name, amount))
-                print(f"[cyan]정산 송금 가이드 (수납자가 환급):[/cyan] {selected_manager} -> {name} : {amount:,}원")
+                print(f"[cyan]정산 송금 가이드 (수납자가 환급):[/cyan] {escape(selected_manager)} -> {escape(name)} : {amount:,}원")
                 
         return incoming_transfers + outgoing_transfers
