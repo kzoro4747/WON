@@ -8,6 +8,7 @@ from calculator import Family, Expense, SettlementCalculator
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 from image_generator import generate_settlement_image
 from auth import check_password, render_logout_button  # 접속 비밀번호 인증 모듈 임포트
+from help_dialog import render_help_button  # 사이드바 맨 위 도움말 버튼 + 팝업
 
 
 # 사용자 지정 비율 합계가 100%에서 이만큼(%p) '미만'으로 벗어나면 저장 허용.
@@ -216,6 +217,9 @@ print("[green]main.py 실행 - 세션 상태 로드 완료[/green]")
 # -----------------------------------------------------------------------------
 # 3. 사이드바: 가족 구성 및 데이터 관리
 # -----------------------------------------------------------------------------
+# 화면 왼쪽 상단(사이드바 맨 위)에 도움말 버튼 배치 → 누르면 세부 도움말 팝업
+render_help_button()
+
 st.sidebar.title("👥 가족 구성원 관리")
 st.sidebar.write("가족 목록을 수정, 추가 또는 삭제할 수 있습니다.")
 

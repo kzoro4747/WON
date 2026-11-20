@@ -47,6 +47,9 @@ UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_
 - 입력 화면의 비율 합계는 100%와 `SHARE_SUM_TOLERANCE`(1%p) 미만으로 차이 나면 저장을 허용한다. 비율 입력칸 key에 참여 가족 구성이 들어 있어, 구성이 바뀌면 균등값으로 다시 채워진다.
 - `test_complex_settlement`의 docstring은 옛 그리디 알고리즘을 설명하지만, 실제 assertion은 총무 허브 결과를 검증한다.
 
+### 도움말 (`help_dialog.py`)
+- 사이드바 맨 위 '❓ 도움말' 버튼 → `st.dialog` 팝업. 문구는 `HELP_TABS`에 탭별 마크다운으로 모여 있으므로, 화면 동작(삭제 규칙, 분담 방식, 백업 복원 등)을 바꾸면 이 설명도 함께 고친다.
+
 ### 이미지 생성 (`image_generator.py`)
 - Pillow로 1600px 폭, 내용에 따라 높이가 동적으로 계산되는 PNG를 그려 bytes로 반환한다. 높이 계산 블록과 실제 그리기 블록이 분리되어 있어, 레이아웃(행 높이·섹션)을 바꾸면 두 곳을 함께 맞춰야 잘리지 않는다.
 - 폰트: `fonts/Pretendard-*.ttf`(저장소에 포함, 없으면 jsDelivr에서 다운로드) → Windows 시스템 한글 폰트 → PIL 기본 폰트 순으로 fallback.
