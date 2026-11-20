@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 린터/포매터 설정은 없다. 테스트는 `calculator.py`만 다루며 `main.py`/`image_generator.py`/`auth.py`에는 자동 테스트가 없다.
 
-UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_state["authenticated"] = True`로 로그인 화면을 건너뜀). AppTest는 앱 폴더를 `sys.path`에 넣지 않으므로 다른 폴더에서 실행할 때는 `sys.path.insert(0, <저장소 경로>)`를 먼저 해야 한다. 안 하면 실행 폴더에 있는 같은 이름의 다른 모듈이 import된다. 로그 파일이 현재 작업 디렉터리에 생기므로 저장소 밖에서 실행하는 편이 낫다.
+UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_state["authenticated"] = True`로 로그인 화면을 건너뜀). AppTest는 앱 폴더를 `sys.path`에 넣지 않으므로 다른 폴더에서 실행할 때는 `sys.path.insert(0, <저장소 경로>)`를 먼저 해야 한다. 안 하면 실행 폴더에 있는 같은 이름의 다른 모듈이 import된다. 로그 파일이 현재 작업 디렉터리에 생기므로 저장소 밖에서 실행하는 편이 낫다. 또 `st.rerun()` 직후 사라진 위젯이 AppTest 요소 목록에 남아 같은 객체로 다음 `run()`을 하면 `KeyError`가 날 수 있으므로, 그 뒤 상태는 `session_state`에 데이터를 미리 넣은 새 AppTest로 확인한다.
 
 ## 아키텍처
 
@@ -42,7 +42,9 @@ UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_
 
 ### 송금 알고리즘 (`calculator.py`)
 - `calculate_balances()`: 지불액 − 분담액 = 순 잔액 (양수=받을 돈, 음수=낼 돈, float).
-- `get_optimal_transfers(manager_name)`: 최소 송금 그리디가 아니라 **총무 허브 방식**이다. 총무(미지정 시 최대 채권자)를 제외한 모든 가족이 총무와 정확히 1회 거래한다. 반환값은 `(보내는 사람, 받는 사람, 금액)` 리스트로, 총무에게 입금하는 건이 먼저, 총무가 환급하는 건이 뒤에 온다. 금액은 가족별로 `int(round(bal))` 반올림되므로 합계가 1~2원 어긋날 수 있다.
+- `get_optimal_transfers(manager_name)`: 최소 송금 그리디가 아니라 **총무 허브 방식**이다. 총무(미지정 시 최대 채권자)를 제외한 모든 가족이 총무와 정확히 1회 거래한다. 반환값은 `(보내는 사람, 받는 사람, 금액)` 리스트로, 총무에게 입금하는 건이 먼저, 총무가 환급하는 건이 뒤에 온다. 1/N·인원수 비례 분담은 float 그대로 계산되고 송금액만 가족별로 `int(round(bal))` 반올림되므로 합계가 1~2원 어긋날 수 있다.
+- 사용자 지정 비율 분담(`split_custom_shares()`)은 비율을 참여 가족 비율 합으로 정규화한 뒤 원 단위로 반올림(0.5 올림)하고, 차액은 `find_remainder_receiver()` 규칙(참여 가족 중 모임 전체 총 지불액 최대 → 동점이면 총무 → 가족 목록 순서)에 따라 한 가족에게 몰아준다. 그래서 **잔액이 총무에 따라 달라질 수 있다.** `main.py`는 총무를 먼저 정하고(`pick_auto_manager()` 또는 session_state의 직전 선택값), 같은 `manager_name`으로 `calculate_balances`·`get_optimal_transfers`·`get_share_rounding_notes`를 호출한다. 차액 안내(`rounding_notes`)는 화면 caption, 카카오톡 공지, 이미지 `notes`(푸터 위 '참고' 영역)에 표시된다.
+- 입력 화면의 비율 합계는 100%와 `SHARE_SUM_TOLERANCE`(1%p) 미만으로 차이 나면 저장을 허용한다. 비율 입력칸 key에 참여 가족 구성이 들어 있어, 구성이 바뀌면 균등값으로 다시 채워진다.
 - `test_complex_settlement`의 docstring은 옛 그리디 알고리즘을 설명하지만, 실제 assertion은 총무 허브 결과를 검증한다.
 
 ### 이미지 생성 (`image_generator.py`)

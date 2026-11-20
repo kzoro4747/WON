@@ -10,6 +10,11 @@ from image_generator import generate_settlement_image
 from auth import check_password, render_logout_button  # 접속 비밀번호 인증 모듈 임포트
 
 
+# 사용자 지정 비율 합계가 100%에서 이만큼(%p) '미만'으로 벗어나면 저장 허용.
+# 예: 3가족 균등 33.3% × 3 = 99.9%. 비율은 계산기에서 정규화되고, 원 단위 반올림 차액은 최다 지출 가족(동점 시 총무)이 떠안습니다.
+SHARE_SUM_TOLERANCE = 1.0
+
+
 # -----------------------------------------------------------------------------
 # 0. 가족 목록 ↔ 지출 내역 정합성 유지 헬퍼
 #    지출 dict는 가족을 '이름'으로만 참조하므로, 가족 이름이 바뀌거나 가족이 삭제되면
@@ -457,8 +462,12 @@ with col_left:
             
             # 이전 저장된 비율 데이터 딕셔너리 불러오기
             saved_shares = {}
-            if is_edit_mode and edit_exp.get("custom_shares"):
+            # 단, 참여 가족 구성이 저장 당시와 같을 때만 사용 (구성이 바뀌면 남은 비율의 합이 맞지 않으므로 균등값으로 다시 채움)
+            if is_edit_mode and edit_exp.get("custom_shares") and set(edit_exp["custom_shares"]) == set(selected_participants):
                 saved_shares = edit_exp["custom_shares"]
+            # 참여 가족 구성이 바뀌면 비율 입력칸 key도 바뀌어 새 위젯(균등값)으로 다시 만들어지도록 하는 접미사
+            # (예전에는 key가 순번·이름 기반이라 체크 해제 후 남은 가족이 예전 값 20%씩을 유지해 합계 80%가 됨)
+            participants_sig = "|".join(selected_participants)
                 
             # 한 줄에 2개씩 배치하여 충분한 가로폭을 확보하고, squish 현상을 방지합니다.
             cols_per_row = 2
@@ -477,17 +486,23 @@ with col_left:
                         max_value=100.0,
                         step=1.0,
                         value=init_share,
-                        key=f"share_pct_val_{idx}_{name}_{st.session_state.expense_widget_key}",
+                        key=f"share_pct_val_{name}_{participants_sig}_{st.session_state.expense_widget_key}",
                         format="%.1f"
                     )
                     custom_shares[name] = val
             
             # 입력된 비율의 실시간 합계 출력
             current_sum = sum(custom_shares.values())
-            if abs(current_sum - 100.0) < 0.01:
+            sum_gap = abs(current_sum - 100.0)
+            if sum_gap < 0.01:
                 st.success(f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다! ✅)")
+            elif sum_gap < SHARE_SUM_TOLERANCE:
+                st.info(
+                    f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다. 비율대로 환산해 원 단위로 나누고, "
+                    "남거나 넘치는 몇 원은 모임 전체에서 가장 많이 지출한 참여 가족(동점이면 총무)이 부담합니다.)"
+                )
             else:
-                st.warning(f"현재 비율 합계: **{current_sum:.1f}%** (합계가 정확히 100.0%가 되어야 합니다. ⚠️)")
+                st.warning(f"현재 비율 합계: **{current_sum:.1f}%** (합계가 100%와 {SHARE_SUM_TOLERANCE:g}%p 미만으로 차이 나야 합니다. ⚠️)")
                     
         submitted = st.button("수정 완료 💾" if is_edit_mode else "추가하기 💳", use_container_width=True)
         
@@ -498,8 +513,8 @@ with col_left:
                 st.error("올바른 지출 금액을 입력해주세요.")
             elif not selected_participants:
                 st.error("최소 한 팀 이상의 참여 가족을 지정해야 합니다.")
-            elif split_method == "사용자 지정 비율 분담 (%)" and abs(sum(custom_shares.values()) - 100.0) > 0.01:
-                st.error(f"비율의 합이 {sum(custom_shares.values()):.1f}% 입니다. 사용자 지정 비율 분담 시 비율의 총합은 반드시 정확히 100.0%가 되어야 합니다.")
+            elif split_method == "사용자 지정 비율 분담 (%)" and abs(sum(custom_shares.values()) - 100.0) >= SHARE_SUM_TOLERANCE:
+                st.error(f"비율의 합이 {sum(custom_shares.values()):.1f}% 입니다. 사용자 지정 비율 분담 시 비율의 총합은 100%와 {SHARE_SUM_TOLERANCE:g}%p 미만으로 차이 나야 합니다.")
             else:
                 new_expense = {
                     "item_name": item_name.strip(),
@@ -617,8 +632,27 @@ with col_right:
         for exp_obj in calculator.expenses:
             payer_summary[exp_obj.payer_name] += exp_obj.amount
             
-        # 순 잔액(Net Balance) 계산
-        balances = calculator.calculate_balances()
+        # 대표 수납자(총무) 결정 → 순 잔액(Net Balance) 계산
+        # 비율 분담의 원 단위 차액은 최다 지출 가족이 동점이면 총무에게 가므로, 잔액보다 총무를 먼저 정합니다.
+        # (총무 선택 위젯은 아래 탭에 있지만, 직전 선택값이 이미 session_state에 있으므로 미리 읽을 수 있음)
+        auto_manager = calculator.pick_auto_manager()
+        selected_manager_opt = st.session_state.get("select_settlement_manager", "자동 선정")
+        active_manager = selected_manager_opt if selected_manager_opt in family_names else auto_manager
+        balances = calculator.calculate_balances(manager_name=active_manager)
+
+        # 원 단위 반올림 차액 안내문 (발생한 지출이 있을 때만 화면·공지 텍스트·이미지에 표시)
+        rounding_notes: List[str] = []
+        for note in calculator.get_share_rounding_notes(manager_name=active_manager):
+            if note["remainder"] > 0:
+                rounding_notes.append(
+                    f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 남은 {note['remainder']:,}원은 "
+                    f"가장 많이 지출한 {note['receiver']} 가족이 부담"
+                )
+            else:
+                rounding_notes.append(
+                    f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 넘친 {-note['remainder']:,}원은 "
+                    f"가장 많이 지출한 {note['receiver']} 가족 분담금에서 차감"
+                )
         
         # UI 레이아웃으로 상세 정보 표시
         tab1, tab2 = st.tabs(["💰 가족별 지출/정산 요약", "💸 최적 송금 경로 결과"])
@@ -658,7 +692,7 @@ with col_right:
             st.markdown("#### **최적 송금 가이드 (대표 수납자 중심)**")
             
             # 대표 수납자(총무) 지정 셀렉트박스 (자동 선정 또는 특정 가족 직접 지정)
-            auto_manager = max(balances, key=lambda k: balances[k]) if balances else ""
+            # 선택값은 위(잔액 계산 전)에서 session_state로 이미 읽어 active_manager에 반영되어 있음
             manager_options = ["자동 선정"] + family_names
             selected_manager_opt = st.selectbox(
                 "👑 대표 수납자(총무) 지정",
@@ -669,8 +703,6 @@ with col_right:
                 help="지정한 가족이 정산금을 모두 수납받은 뒤, 더 많은 금액을 지출한(돌려받아야 할) 가족에게 다시 송금합니다."
             )
             
-            # 실제 수납자 이름 결정
-            active_manager = auto_manager if selected_manager_opt == "자동 선정" else selected_manager_opt
             optimal_transfers = calculator.get_optimal_transfers(manager_name=active_manager)
             
             if not optimal_transfers:
@@ -691,6 +723,10 @@ with col_right:
                     </div>
                     """, unsafe_allow_html=True)
                 
+                # 비율 분담 원 단위 차액 안내 (발생한 경우에만)
+                for note_text in rounding_notes:
+                    st.caption(f"※ {note_text}")
+
                 # 총무(대표 수납자) 기준 받는 금액 / 돌려주는 금액 / 최종 남는 금액 계산 및 표시
                 manager_received = sum(amt for _, cred, amt in optimal_transfers if cred == active_manager)
                 manager_paid_out = sum(amt for debt, _, amt in optimal_transfers if debt == active_manager)
@@ -739,7 +775,8 @@ with col_right:
                             transfers=optimal_transfers,
                             total_spent=total_spent,
                             allocated_summary=allocated_summary,
-                            manager_name=active_manager
+                            manager_name=active_manager,
+                            notes=rounding_notes
                         )
                         
                         # 화면에 생성된 이미지 미리보기 노출
@@ -795,6 +832,12 @@ with col_right:
                     notice_text += f" {idx+1}. {exp['item_name']}{memo_str} ({exp['payer_name']} 지불 / {split_info}): {exp['amount']:,}원\n"
                 notice_text += "\n"
                 
+                if rounding_notes:
+                    notice_text += "※ 원 단위 반올림 안내:\n"
+                    for note_text in rounding_notes:
+                        notice_text += f" - {note_text}\n"
+                    notice_text += "\n"
+
                 notice_text += f"💸 송금 요청 내역 ({active_manager} 수납 중심):\n"
                 for debtor, creditor, amt in optimal_transfers:
                     notice_text += f" 👉 {debtor} ➔ {creditor} : {amt:,}원\n"

@@ -193,5 +193,48 @@ class TestSettlementCalculator(unittest.TestCase):
         self.assertEqual(transfer_dict["박씨네"], 20000)
         print("[green]테스트 성공: 사용자 지정 비율 분담 검증 완료[/green]")
 
+    def test_custom_ratio_rounding_remainder_to_top_spender(self) -> None:
+        """
+        5. 비율 합이 99.9%(33.3% × 3)일 때 원 단위 반올림 차액이 '가장 많이 지출한 참여 가족'에게 가는지 검증합니다.
+        김씨네가 100,000원 지불, 김·이·박 33.3%씩 → 정규화하면 1/3씩 = 33,333.33원
+        - 원 단위 반올림: 33,333원 × 3 = 99,999원 → 남은 1원은 최다 지출 가족 김씨네가 부담 (33,334원)
+        순 잔액: 김씨네 +66,666 / 이씨네 -33,333 / 박씨네 -33,333 (합계 0원)
+        """
+        print("[magenta]테스트 시작: 비율 분담 원 단위 차액 → 최다 지출 가족[/magenta]")
+        shares = {"김씨네": 33.3, "이씨네": 33.3, "박씨네": 33.3}
+        self.calc.add_expense(Expense("숙박비", "김씨네", 100000, ["김씨네", "이씨네", "박씨네"], custom_shares=shares))
+
+        balances = self.calc.calculate_balances()
+        self.assertAlmostEqual(balances["김씨네"], 66666.0)
+        self.assertAlmostEqual(balances["이씨네"], -33333.0)
+        self.assertAlmostEqual(balances["박씨네"], -33333.0)
+        self.assertAlmostEqual(sum(balances.values()), 0.0)
+
+        notes = self.calc.get_share_rounding_notes()
+        self.assertEqual(notes, [{"item_name": "숙박비", "remainder": 1, "receiver": "김씨네"}])
+        print("[green]테스트 성공: 원 단위 차액이 최다 지출 가족에게 반영됨[/green]")
+
+    def test_custom_ratio_rounding_tie_goes_to_manager(self) -> None:
+        """
+        6. 최다 지출 가족이 동점이면 원 단위 차액이 총무에게 가는지 검증합니다.
+        김씨네·이씨네가 각각 50,000원씩 지불(동점), 박씨네가 10,000원을 김·이·박 33.3%씩 비율 분담으로 지불
+        - 10,000원 / 3 = 3,333.33원 → 3,333원 × 3 = 9,999원 → 차액 1원
+        - 총무가 이씨네면 이씨네가 1원 부담, 총무를 정하지 않으면 가족 목록 순서상 앞인 김씨네가 부담
+        """
+        print("[magenta]테스트 시작: 원 단위 차액 동점 시 총무 우선[/magenta]")
+        self.calc.add_expense(Expense("장보기", "김씨네", 50000, ["김씨네", "이씨네"]))
+        self.calc.add_expense(Expense("주유비", "이씨네", 50000, ["김씨네", "이씨네"]))
+        shares = {"김씨네": 33.3, "이씨네": 33.3, "박씨네": 33.3}
+        self.calc.add_expense(Expense("카페", "박씨네", 10000, ["김씨네", "이씨네", "박씨네"], custom_shares=shares))
+
+        self.assertEqual(self.calc.get_share_rounding_notes(manager_name="이씨네")[0]["receiver"], "이씨네")
+        self.assertEqual(self.calc.get_share_rounding_notes()[0]["receiver"], "김씨네")
+
+        # 총무 지정 시 송금액 합계가 정확히 맞는지(받는 돈 = 보내는 돈 + 총무 몫) 확인
+        balances = self.calc.calculate_balances(manager_name="이씨네")
+        self.assertAlmostEqual(balances["이씨네"], 50000 - 25000 - 25000 - 3334)
+        self.assertAlmostEqual(sum(balances.values()), 0.0)
+        print("[green]테스트 성공: 동점 시 총무에게 원 단위 차액 반영[/green]")
+
 if __name__ == "__main__":
     unittest.main()

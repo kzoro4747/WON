@@ -65,11 +65,16 @@ def generate_settlement_image(
     transfers: List[Tuple[str, str, int]],
     total_spent: int,
     allocated_summary: Dict[str, float] = None,
-    manager_name: str = None
+    manager_name: str = None,
+    notes: List[str] = None
 ) -> bytes:
     """
     정산 결과 요약과 송금 경로를 시각화하여 고화질의 PNG 카드 이미지(Bytes)로 생성합니다.
     (해상도를 4배로 키우기 위해 모든 크기 단위를 2배로 확장 적용)
+
+    Args:
+        notes (List[str]): 푸터 위 '참고' 영역에 '※ '를 붙여 한 줄씩 표시할 주석
+            (예: 비율 분담 원 단위 반올림 차액 안내). None 또는 빈 리스트면 영역을 그리지 않습니다.
     """
     print("[blue]이미지 생성 시작: 정산 결과 데이터 파싱 중...[/blue]")
     
@@ -167,8 +172,10 @@ def generate_settlement_image(
     transfers_title_h = 90
     transfers_list_h = max(len(transfers) * 110 + (200 if manager_name and transfers else 40), 120)
     footer_h = 160
-    
-    total_height = header_h + families_h + expenses_title_h + expenses_list_h + transfers_title_h + transfers_list_h + footer_h
+    # 참고 주석 영역: 아래 '8.5' 그리기 블록과 높이를 맞출 것 (상단 여백 20 + 제목 44 + 줄당 40)
+    notes_h = (64 + len(notes) * 40) if notes else 0
+
+    total_height = header_h + families_h + expenses_title_h + expenses_list_h + transfers_title_h + transfers_list_h + notes_h + footer_h
     print(f"[blue]동적 이미지 규격 설정 (4배 해상도):[/blue] {width}x{total_height} (지출 {len(expenses)}건, 송금 {len(transfers)}건)")
     
     # 3. 그라데이션 배경 생성
@@ -372,6 +379,16 @@ def generate_settlement_image(
             
             current_y += 145
             
+    # 8.5. 참고 주석 영역 (있을 때만, 높이는 위 notes_h와 동일하게 유지)
+    if notes:
+        current_y += 20
+        draw.text((80, current_y), "참고", font=font_bold, fill=(251, 191, 36))
+        current_y += 44
+        for note in notes:
+            draw.text((110, current_y), f"※ {note}", font=font_small, fill=(251, 191, 36))
+            current_y += 40
+        print(f"[blue]이미지 참고 주석 {len(notes)}건 표시[/blue]")
+
     # 9. 푸터 섹션
     current_y += 20
     draw.line([(80, current_y), (width - 80, current_y)], fill=(51, 65, 85), width=2)

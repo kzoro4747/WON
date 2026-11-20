@@ -1,4 +1,5 @@
-from typing import List, Dict, Tuple, Optional
+import math
+from typing import Any, List, Dict, Tuple, Optional
 from rich.markup import escape  # 가족명·항목명 등 사용자 입력이 rich 마크업으로 해석되지 않도록 이스케이프
 from logger_utils import print  # 규칙에 따라 rich 기반의 커스텀 로거 임포트
 
@@ -63,11 +64,122 @@ class SettlementCalculator:
         else:
             raise IndexError("유효하지 않은 지출 인덱스입니다.")
 
-    def calculate_balances(self) -> Dict[str, float]:
+    def get_total_paid(self) -> Dict[str, int]:
+        """
+        가족별로 모임 전체에서 실제로 지불한 총액(원)을 계산합니다.
+        비율 분담의 원 단위 차액을 받을 '가장 많이 지출한 가족'을 고르는 기준으로 쓰입니다.
+
+        Returns:
+            Dict[str, int]: {가족명: 총 지불액}. 지출이 없는 가족은 0원.
+        """
+        paid: Dict[str, int] = {name: 0 for name in self.families}
+        for exp in self.expenses:
+            paid[exp.payer_name] += exp.amount
+        return paid
+
+    def find_remainder_receiver(self, participants: List[str], manager_name: Optional[str] = None) -> str:
+        """
+        비율 분담을 원 단위로 반올림한 뒤 남거나 넘친 금액을 떠안을 가족을 고릅니다.
+
+        선정 규칙:
+            1. 해당 지출의 참여 가족 중 모임 전체 총 지불액이 가장 큰 가족
+            2. 동점이면, 총무(manager_name)가 동점자 안에 있을 때 총무
+            3. 그래도 정해지지 않으면 가족 목록 순서상 가장 앞에 있는 가족
+
+        Args:
+            participants (List[str]): 해당 지출의 참여 가족 목록 (비어 있으면 안 됨)
+            manager_name (Optional[str]): 대표 수납자(총무) 가족명. 동점 처리에만 사용.
+
+        Returns:
+            str: 차액을 반영할 가족명
+        """
+        paid = self.get_total_paid()
+        top_amount = max(paid.get(p, 0) for p in participants)
+        # 가족 목록(self.families) 순서를 유지한 채 동점자를 모음
+        tied = [name for name in self.families if name in participants and paid.get(name, 0) == top_amount]
+        if manager_name is not None and manager_name in tied:
+            return manager_name
+        return tied[0]
+
+    def split_custom_shares(self, exp: "Expense", manager_name: Optional[str] = None) -> Tuple[Dict[str, int], int, Optional[str]]:
+        """
+        사용자 지정 비율 분담 지출의 가족별 분담액을 원 단위로 계산합니다.
+
+        계산 순서:
+            1. 각 참여 가족의 비율을 참여 가족 비율 합으로 나눠 정규화
+               (합이 99.9%처럼 100%에서 조금 벗어나도 비율대로 지출액 전체를 나눔)
+            2. 가족별 분담액을 원 단위로 반올림(0.5원 이상 올림)
+            3. 반올림 때문에 생긴 차액(지출액 - 반올림한 분담액 합)을
+               find_remainder_receiver()가 고른 가족의 분담액에 더함 (차액이 음수면 빼짐)
+
+        Args:
+            exp (Expense): custom_shares가 있는 지출
+            manager_name (Optional[str]): 대표 수납자(총무). 차액 받을 가족이 동점일 때 사용.
+
+        Returns:
+            Tuple[Dict[str, int], int, Optional[str]]:
+                (가족별 분담액(차액 반영 후), 차액(원, 음수 가능), 차액을 반영한 가족 또는 None(차액 0원))
+                참여 가족 비율 합이 0 이하이면 ({}, 0, None)을 돌려주어 아무에게도 분담하지 않습니다(기존 동작 유지).
+        """
+        shares_cfg = exp.custom_shares or {}
+        total_shares = sum(shares_cfg.get(p, 0.0) for p in exp.participants)
+        if total_shares <= 0:
+            return {}, 0, None
+
+        shares: Dict[str, int] = {
+            p: math.floor(shares_cfg.get(p, 0.0) / total_shares * exp.amount + 0.5)
+            for p in exp.participants
+        }
+        remainder = exp.amount - sum(shares.values())
+        if remainder == 0:
+            return shares, 0, None
+
+        receiver = self.find_remainder_receiver(exp.participants, manager_name)
+        shares[receiver] += remainder
+        print(f"[cyan]비율 분담 원 단위 차액 반영:[/cyan] {escape(exp.item_name)} | 차액 {remainder:+,}원 → {escape(receiver)} (최다 지출 가족, 동점 시 총무)")
+        return shares, remainder, receiver
+
+    def get_share_rounding_notes(self, manager_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        원 단위 반올림 차액이 생긴 비율 분담 지출 목록을 돌려줍니다. (화면 안내·카카오톡 공지·이미지 주석용)
+
+        Args:
+            manager_name (Optional[str]): 대표 수납자(총무). 정산 계산과 같은 값을 넘겨야 결과가 일치합니다.
+
+        Returns:
+            List[Dict[str, Any]]: [{"item_name": 항목명, "remainder": 차액(원, 음수 가능), "receiver": 반영한 가족}, ...]
+        """
+        notes: List[Dict[str, Any]] = []
+        for exp in self.expenses:
+            if not exp.participants or not exp.custom_shares:
+                continue
+            _, remainder, receiver = self.split_custom_shares(exp, manager_name)
+            if remainder != 0 and receiver is not None:
+                notes.append({"item_name": exp.item_name, "remainder": remainder, "receiver": receiver})
+        return notes
+
+    def pick_auto_manager(self) -> str:
+        """
+        총무를 '자동 선정'할 때 쓸 가족(순 잔액이 가장 큰 채권자)을 고릅니다.
+        총무가 아직 없는 상태로 1차 잔액을 계산해 고르므로, 비율 분담 차액의 동점 처리는 가족 목록 순서를 따릅니다.
+
+        Returns:
+            str: 자동 선정된 총무 가족명 (가족이 없으면 빈 문자열)
+        """
+        balances = self.calculate_balances()
+        if not balances:
+            return ""
+        return max(balances, key=lambda k: balances[k])
+
+    def calculate_balances(self, manager_name: Optional[str] = None) -> Dict[str, float]:
         """
         각 가족이 총 지출한 금액에서 분담해야 할 금액을 빼서 순 잔액(Net Balance)을 계산합니다.
         - 결과값이 양수(> 0)이면 돌려받아야 하는 돈(채권)이 있는 가족입니다.
         - 결과값이 음수(< 0)이면 더 내야 하는 돈(채무)이 있는 가족입니다.
+
+        Args:
+            manager_name (Optional[str]): 대표 수납자(총무). 사용자 지정 비율 분담의 원 단위 차액을 받을 가족이
+                동점일 때만 영향을 줍니다. 화면 표시와 송금 계산에 같은 값을 넘겨야 결과가 일치합니다.
         """
         # 모든 가족의 순 잔액 초기화 (0.0 원)
         balances: Dict[str, float] = {name: 0.0 for name in self.families}
@@ -82,12 +194,11 @@ class SettlementCalculator:
                 continue
                 
             # 2.1. 사용자 지정 비율 분담이 정의되어 있는 경우 우선 분배
+            #      원 단위로 나누고, 남거나 넘친 금액은 최다 지출 가족(동점 시 총무)에게 반영 (split_custom_shares 참고)
             if exp.custom_shares and len(exp.custom_shares) > 0:
-                total_shares = sum(exp.custom_shares.get(p, 0.0) for p in exp.participants)
-                if total_shares > 0:
-                    for p in exp.participants:
-                        share = (exp.custom_shares.get(p, 0.0) / total_shares) * exp.amount
-                        balances[p] -= share
+                shares, _, _ = self.split_custom_shares(exp, manager_name)
+                for p, share in shares.items():
+                    balances[p] -= share
                 continue
                 
             # 2.2. 기존 기본 분담 로직
@@ -124,18 +235,19 @@ class SettlementCalculator:
         Returns:
             List[Tuple[str, str, int]]: (보내는 사람, 받는 사람, 금액)의 리스트
         """
-        balances = self.calculate_balances()
-        
-        if not balances:
+        if not self.families:
             return []
-            
+
         # 사용자가 지정한 수납자가 유효한 가족명인지 확인 후 설정, 아니면 최대 채권자로 자동 지정
-        if manager_name and manager_name in balances:
+        # (총무가 정해진 뒤에 잔액을 계산해야 비율 분담 차액의 동점 처리가 총무 기준으로 맞춰짐)
+        if manager_name and manager_name in self.families:
             selected_manager = manager_name
+            balances = self.calculate_balances(selected_manager)
             manager_bal = balances[selected_manager]
             print(f"[cyan]대표 수납자(총무) 수동 지정됨:[/cyan] {escape(selected_manager)} (잔액: {manager_bal:,.1f}원)")
         else:
-            selected_manager = max(balances, key=lambda k: balances[k])
+            selected_manager = self.pick_auto_manager()
+            balances = self.calculate_balances(selected_manager)
             manager_bal = balances[selected_manager]
             print(f"[cyan]대표 수납자(총무) 자동 지정됨:[/cyan] {escape(selected_manager)} (잔액: {manager_bal:,.1f}원)")
         
