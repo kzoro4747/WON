@@ -223,7 +223,11 @@ if rename_map:
 if to_delete is not None:
     target_name = st.session_state.families_data[to_delete]["name"]
     used_in = find_expenses_using_family(st.session_state.expenses_data, target_name)
-    if used_in:
+    if len(st.session_state.families_data) <= 1:
+        # 가족이 0팀이 되면 지출 입력 영역의 st.columns(0) 등에서 앱이 멈추므로 최소 1팀은 남겨 둡니다.
+        st.sidebar.error("가족은 최소 1팀 이상 있어야 하므로 마지막 남은 가족은 삭제할 수 없습니다. 새 가족을 먼저 추가해 주세요.")
+        print(f"[yellow]가족 삭제 차단 (마지막 남은 가족):[/yellow] {escape(target_name)}")
+    elif used_in:
         # 지출에서 사용 중인 가족을 지우면 해당 지출이 정산에서 빠지거나 KeyError가 나므로 삭제를 막습니다.
         st.sidebar.error(
             f"'{target_name}' 가족은 지출 {len(used_in)}건({', '.join(used_in)})에 지불자나 참여자로 들어 있어 삭제할 수 없습니다. "
@@ -289,7 +293,11 @@ if uploaded_file is not None:
     if file_load_key not in st.session_state:
         try:
             loaded_data = json.load(uploaded_file)
-            if "families" in loaded_data and "expenses" in loaded_data:
+            if "families" in loaded_data and "expenses" in loaded_data and not loaded_data["families"]:
+                # 가족 목록이 빈 백업을 불러오면 가족 0팀 상태가 되어 앱이 멈추므로 불러오지 않습니다.
+                st.sidebar.error("가족 목록이 비어 있는 백업 파일은 불러올 수 없습니다. 가족이 1팀 이상 들어 있는 파일을 선택해 주세요.")
+                print(f"[yellow]빈 가족 목록 백업 파일 불러오기 거부:[/yellow] {escape(uploaded_file.name)}")
+            elif "families" in loaded_data and "expenses" in loaded_data:
                 # 1. UI 위젯 캐시 충돌 방지를 위해 위젯 키 재생성 플래그 증가
                 st.session_state.family_widget_key += 1
                 st.session_state.expense_widget_key += 1
