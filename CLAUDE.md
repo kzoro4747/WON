@@ -30,7 +30,7 @@ UI 동작은 `streamlit.testing.v1.AppTest`로 확인할 수 있다(`at.session_
 - 위젯 초기화는 `expense_widget_key` / `family_widget_key` 카운터를 증가시켜 위젯 key를 바꾸는 방식으로 한다 (key에 카운터가 접미사로 붙어 있음). 지출 수정 모드는 `editing_index`로 제어한다.
 - 지출 입력 영역은 의도적으로 `st.form`이 아닌 `st.container`를 사용한다. "사용자 지정 비율 분담 (%)" 선택 시 비율 입력 칸이 즉시 나타나려면 위젯 변경마다 rerun이 필요하기 때문이다 (커밋 a0dd589). form으로 되돌리지 말 것.
 - `auth.check_password()`가 `False`면 `main.py`가 `st.stop()`으로 이후 렌더링을 막는다. 비밀번호는 `st.secrets["APP_PASSWORD"]`(또는 `password`)에서 읽고, 없으면 `1234`를 쓴다. Streamlit 1.57에서는 `secrets.toml`이 없으면 `"키" in st.secrets`만으로 `StreamlitSecretNotFoundError`(`FileNotFoundError` 하위)가 나므로 secrets 조회는 `auth._get_configured_password()`를 거친다. `.streamlit/` 디렉터리 전체가 gitignore 대상이라 새로 clone한 환경에는 이 파일이 없다.
-- 지출 dict는 가족을 **이름으로만** 참조한다. 사이드바에서 이름을 바꾸면 `apply_family_renames()`가 지출의 지불자·참여자·`custom_shares` 키와 `last_payer`·총무 선택값을 새 이름으로 바꾸고, 지출에서 쓰는 가족은 `find_expenses_using_family()`로 확인해 삭제를 막는다. 가족 입력 위젯 key는 목록 위치 기반이므로 가족 목록에서 항목을 빼면 반드시 `family_widget_key`를 올려야 한다.
+- 지출 dict는 가족을 **이름으로만** 참조한다. 사이드바에서 이름을 바꾸면 `apply_family_renames()`가 지출의 지불자·참여자·`custom_shares` 키와 `last_payer`·총무 선택값을 새 이름으로 바꾸고, 지출에서 쓰는 가족은 `find_expenses_using_family()`로 확인해 삭제를 막는다. 빈 이름이나 다른 가족과 같은 이름으로 바꾸면 `revert_invalid_family_renames()`가 원래 이름으로 되돌린다(같은 이름을 허용하면 두 가족의 지출이 합쳐져 복구할 수 없음). 마지막 남은 가족은 삭제할 수 없다. 가족 입력 위젯 key는 목록 위치 기반이므로 가족 목록에서 항목을 빼면 반드시 `family_widget_key`를 올려야 한다.
 
 ### 지출 dict 스키마 (session_state · JSON 백업 공통)
 ```python

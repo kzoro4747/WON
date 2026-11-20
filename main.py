@@ -68,6 +68,37 @@ def find_expenses_using_family(expenses: List[Dict[str, Any]], family_name: str)
     ]
 
 
+def revert_invalid_family_renames(old_families: List[Dict[str, Any]], new_families: List[Dict[str, Any]]) -> List[str]:
+    """
+    사이드바에서 바뀐 가족 이름 중 허용되지 않는 변경을 원래 이름으로 되돌립니다. (new_families를 제자리에서 수정)
+
+    거부 대상:
+        - 빈 이름
+        - 다른 가족과 같은 이름: 지출은 가족을 이름으로만 참조하므로, 허용하면 두 가족의 지출이 합쳐지고
+          이름을 다시 바꿔도 한쪽으로 몰려 되돌릴 수 없게 됩니다.
+
+    Args:
+        old_families (List[Dict[str, Any]]): 이번 rerun 전의 st.session_state.families_data
+        new_families (List[Dict[str, Any]]): 입력칸 값으로 새로 만든 가족 목록 (같은 순서·같은 길이)
+
+    Returns:
+        List[str]: 사용자에게 보여 줄 안내 문구 목록 (되돌린 변경이 없으면 빈 리스트)
+    """
+    errors: List[str] = []
+    for i, (old_fam, new_fam) in enumerate(zip(old_families, new_families)):
+        if new_fam["name"] == old_fam["name"]:
+            continue
+        other_names = [f["name"] for j, f in enumerate(new_families) if j != i]
+        if not new_fam["name"]:
+            errors.append(f"'{old_fam['name']}' 가족의 이름은 비워 둘 수 없어 원래 이름으로 되돌렸습니다.")
+        elif new_fam["name"] in other_names:
+            errors.append(f"'{new_fam['name']}'은(는) 이미 있는 가족 이름이라 '{old_fam['name']}'(으)로 되돌렸습니다.")
+        else:
+            continue
+        new_fam["name"] = old_fam["name"]
+    return errors
+
+
 # -----------------------------------------------------------------------------
 # 1. 페이지 설정 및 현대적인 스타일 정의
 # -----------------------------------------------------------------------------
@@ -188,6 +219,11 @@ print("[green]main.py 실행 - 세션 상태 로드 완료[/green]")
 st.sidebar.title("👥 가족 구성원 관리")
 st.sidebar.write("가족 목록을 수정, 추가 또는 삭제할 수 있습니다.")
 
+# 직전 실행에서 이름 변경을 되돌렸다면 그 이유를 한 번 표시 (되돌린 뒤 st.rerun()하므로 1회성 메시지로 전달)
+rename_error_notice = st.session_state.pop("family_rename_error", None)
+if rename_error_notice:
+    st.sidebar.error(rename_error_notice)
+
 # 가족 삭제 작업 처리
 to_delete = None
 updated_families = []
@@ -207,9 +243,16 @@ for i, fam in enumerate(st.session_state.families_data):
         if st.button("❌", key=f"fam_del_{i}", help=f"{fam['name']} 가족 삭제"):
             to_delete = i
     
-    updated_families.append({"name": fam_name, "member_count": fam_count})
-    if fam_name != fam["name"]:
-        rename_map[fam["name"]] = fam_name
+    # 앞뒤 공백은 이름으로 치지 않음 (새 가족 추가 폼과 같은 기준)
+    updated_families.append({"name": fam_name.strip(), "member_count": fam_count})
+
+# 빈 이름·다른 가족과 같은 이름으로의 변경은 원래 이름으로 되돌림 (지출이 합쳐져 복구할 수 없게 되는 것 방지)
+rename_errors = revert_invalid_family_renames(st.session_state.families_data, updated_families)
+
+# 검증을 통과한 이름 변경만 {예전 이름: 새 이름}으로 모음
+for old_fam, new_fam in zip(st.session_state.families_data, updated_families):
+    if new_fam["name"] != old_fam["name"]:
+        rename_map[old_fam["name"]] = new_fam["name"]
 
 # 변경된 리스트 실시간 반영
 st.session_state.families_data = updated_families
@@ -223,6 +266,13 @@ if rename_map:
     if st.session_state.get("select_settlement_manager") in rename_map:
         st.session_state.select_settlement_manager = rename_map[st.session_state.select_settlement_manager]
     print(f"[green]사용자 조작으로 가족 이름 변경됨:[/green] {escape(str(rename_map))} (지출 {renamed_expense_count}건에 반영)")
+
+# 되돌린 이름 변경이 있으면 입력칸도 원래 이름으로 다시 그리도록 위젯을 새로 만들고, 안내는 rerun 뒤 1회 표시
+if rename_errors:
+    st.session_state.family_rename_error = " ".join(rename_errors)
+    st.session_state.family_widget_key += 1
+    print(f"[yellow]가족 이름 변경 거부:[/yellow] {escape(' '.join(rename_errors))}")
+    st.rerun()
 
 # 삭제 버튼이 클릭되었을 때의 처리
 if to_delete is not None:
