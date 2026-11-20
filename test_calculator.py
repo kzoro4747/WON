@@ -195,33 +195,34 @@ class TestSettlementCalculator(unittest.TestCase):
 
     def test_custom_ratio_rounding_remainder_to_top_spender(self) -> None:
         """
-        5. 비율 합이 99.9%(33.3% × 3)일 때 원 단위 반올림 차액이 '가장 많이 지출한 참여 가족'에게 가는지 검증합니다.
+        5. 비율 합이 99.9%(33.3% × 3)일 때 끝전이 '가장 많이 지출한 참여 가족'에게 남는지 검증합니다.
         김씨네가 100,000원 지불, 김·이·박 33.3%씩 → 정규화하면 1/3씩 = 33,333.33원
-        - 원 단위 반올림: 33,333원 × 3 = 99,999원 → 남은 1원은 최다 지출 가족 김씨네가 부담 (33,334원)
-        순 잔액: 김씨네 +66,666 / 이씨네 -33,333 / 박씨네 -33,333 (합계 0원)
+        - 다른 가족 몫은 올림: 이씨네·박씨네 33,334원씩
+        - 최다 지출 가족 김씨네는 100,000 - 66,668 = 33,332원 → 끝전 1원(33,333원 대비)이 김씨네에게 남음
+        순 잔액: 김씨네 +66,668 / 이씨네 -33,334 / 박씨네 -33,334 (합계 0원)
         """
-        print("[magenta]테스트 시작: 비율 분담 원 단위 차액 → 최다 지출 가족[/magenta]")
+        print("[magenta]테스트 시작: 비율 분담 끝전 → 최다 지출 가족에게 남음[/magenta]")
         shares = {"김씨네": 33.3, "이씨네": 33.3, "박씨네": 33.3}
         self.calc.add_expense(Expense("숙박비", "김씨네", 100000, ["김씨네", "이씨네", "박씨네"], custom_shares=shares))
 
         balances = self.calc.calculate_balances()
-        self.assertAlmostEqual(balances["김씨네"], 66666.0)
-        self.assertAlmostEqual(balances["이씨네"], -33333.0)
-        self.assertAlmostEqual(balances["박씨네"], -33333.0)
+        self.assertAlmostEqual(balances["김씨네"], 66668.0)
+        self.assertAlmostEqual(balances["이씨네"], -33334.0)
+        self.assertAlmostEqual(balances["박씨네"], -33334.0)
         self.assertAlmostEqual(sum(balances.values()), 0.0)
 
         notes = self.calc.get_share_rounding_notes()
-        self.assertEqual(notes, [{"item_name": "숙박비", "remainder": 1, "receiver": "김씨네"}])
-        print("[green]테스트 성공: 원 단위 차액이 최다 지출 가족에게 반영됨[/green]")
+        self.assertEqual(notes, [{"item_name": "숙박비", "tail": 1, "receiver": "김씨네"}])
+        print("[green]테스트 성공: 끝전이 최다 지출 가족에게 남음[/green]")
 
     def test_custom_ratio_rounding_tie_goes_to_manager(self) -> None:
         """
-        6. 최다 지출 가족이 동점이면 원 단위 차액이 총무에게 가는지 검증합니다.
+        6. 최다 지출 가족이 동점이면 비율 분담 끝전이 총무에게 남는지 검증합니다.
         김씨네·이씨네가 각각 50,000원씩 지불(동점), 박씨네가 10,000원을 김·이·박 33.3%씩 비율 분담으로 지불
-        - 10,000원 / 3 = 3,333.33원 → 3,333원 × 3 = 9,999원 → 차액 1원
-        - 총무가 이씨네면 이씨네가 1원 부담, 총무를 정하지 않으면 가족 목록 순서상 앞인 김씨네가 부담
+        - 10,000원 / 3 = 3,333.33원 → 끝전 받을 가족 외에는 3,334원씩(올림)
+        - 총무가 이씨네면 이씨네가 3,332원만 냄(끝전이 이씨네에게), 총무를 정하지 않으면 가족 목록 순서상 앞인 김씨네에게
         """
-        print("[magenta]테스트 시작: 원 단위 차액 동점 시 총무 우선[/magenta]")
+        print("[magenta]테스트 시작: 비율 분담 끝전 동점 시 총무 우선[/magenta]")
         self.calc.add_expense(Expense("장보기", "김씨네", 50000, ["김씨네", "이씨네"]))
         self.calc.add_expense(Expense("주유비", "이씨네", 50000, ["김씨네", "이씨네"]))
         shares = {"김씨네": 33.3, "이씨네": 33.3, "박씨네": 33.3}
@@ -232,9 +233,10 @@ class TestSettlementCalculator(unittest.TestCase):
 
         # 총무 지정 시 송금액 합계가 정확히 맞는지(받는 돈 = 보내는 돈 + 총무 몫) 확인
         balances = self.calc.calculate_balances(manager_name="이씨네")
-        self.assertAlmostEqual(balances["이씨네"], 50000 - 25000 - 25000 - 3334)
+        self.assertAlmostEqual(balances["이씨네"], 50000 - 25000 - 25000 - 3332)
+        self.assertAlmostEqual(balances["김씨네"], 50000 - 25000 - 25000 - 3334)
         self.assertAlmostEqual(sum(balances.values()), 0.0)
-        print("[green]테스트 성공: 동점 시 총무에게 원 단위 차액 반영[/green]")
+        print("[green]테스트 성공: 동점 시 총무에게 비율 분담 끝전이 남음[/green]")
 
     def test_custom_ratio_zero_total_falls_back_to_default_split(self) -> None:
         """

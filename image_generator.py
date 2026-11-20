@@ -452,7 +452,8 @@ def generate_settlement_image(
             # 끝전: 총무에게 보낼 돈은 올림·돌려줄 돈은 내림으로 정하면서 총무에게 더 남는 금액 (main.py의 manager_tail과 같은 식)
             # 계산식으로 짧게 써서 박스 폭(1줄)을 넘지 않게 하고, 끝전이 있으면 식에 포함해 최종 남는 금액과 맞춤
             manager_tail = manager_remaining - (manager_spent - manager_share)
-            tail_str = f" + 끝전 {manager_tail:,}원" if manager_tail > 0 else ""
+            # (이 끝전은 1/N·인원수 비례 송금액 올림/내림에서 생김. 비율 분담 끝전은 분담금에 이미 반영되어 있음)
+            tail_str = f" + 1/N 끝전 {manager_tail:,}원" if manager_tail > 0 else ""
             if manager_remaining >= 0:
                 desc_text = f"※ 최종 남는 금액 = 총무({manager_name}) 선결제 {manager_spent:,}원 - 본인 분담금 {manager_share:,}원{tail_str} (최종 회수하는 본인 몫)"
             else:

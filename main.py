@@ -12,7 +12,8 @@ from help_dialog import render_help_button  # 사이드바 맨 위 도움말 버
 
 
 # 사용자 지정 비율 합계가 100%에서 이만큼(%p) '미만'으로 벗어나면 저장 허용.
-# 예: 3가족 균등 33.3% × 3 = 99.9%. 비율은 계산기에서 정규화되고, 원 단위 반올림 차액은 최다 지출 가족(동점 시 총무)이 떠안습니다.
+# 예: 3가족 균등 33.3% × 3 = 99.9%. 비율은 계산기에서 정규화되고, 다른 가족 몫은 원 단위 올림해
+# 끝전은 최다 지출 가족(동점 시 총무)에게 남습니다. (calculator.split_custom_shares 참고)
 SHARE_SUM_TOLERANCE = 1.0
 
 
@@ -583,8 +584,8 @@ with col_left:
                 st.success(f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다! ✅)")
             elif sum_gap < SHARE_SUM_TOLERANCE:
                 st.info(
-                    f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다. 비율대로 환산해 원 단위로 나누고, "
-                    "남거나 넘치는 몇 원은 모임 전체에서 가장 많이 지출한 참여 가족(동점이면 총무)이 부담합니다.)"
+                    f"현재 비율 합계: **{current_sum:.1f}%** (정산 가능합니다. 비율대로 환산해 원 단위로 나누는데, "
+                    "다른 가족 몫은 올림하고 끝전 몇 원은 모임 전체에서 가장 많이 지출한 참여 가족(동점이면 총무)에게 남습니다.)"
                 )
             else:
                 st.warning(f"현재 비율 합계: **{current_sum:.1f}%** (합계가 100%와 {SHARE_SUM_TOLERANCE:g}%p 미만으로 차이 나야 합니다. ⚠️)")
@@ -744,30 +745,27 @@ with col_right:
                 settle_amounts[creditor] = amt  # 총무에게서 돌려받음
         settle_amounts[active_manager] = manager_remaining
 
-        # 정산 참고 안내문 (해당하는 지출이 있을 때만 화면·공지 텍스트·이미지 '참고' 영역에 표시)
-        #  - 사용자 지정 비율 분담의 원 단위 반올림 차액
-        #  - 비율 합이 0%라 기본 분담으로 대신 나눈 지출 (백업 파일로만 유입 가능)
+        # 정산 참고 안내문 (해당할 때만 화면·공지 텍스트·이미지 '참고' 영역에 표시)
+        # 분담 방식별로 끝전 규칙이 다르므로 [1/N·인원수 비례] / [비율 분담] 머리표로 구분해 한 줄씩 표시
+        #  - [1/N·인원수 비례] 송금액 올림/내림으로 총무에게 남은 끝전
+        #  - [비율 분담] 지출별로 최다 지출 가족에게 남은 끝전
+        #  - [비율 분담] 비율 합이 0%라 기본 분담으로 대신 나눈 지출 (백업 파일로만 유입 가능)
         settlement_notes: List[str] = []
-        for fallback in calculator.get_zero_share_fallbacks():
-            settlement_notes.append(
-                f"'{fallback['item_name']}' 비율 분담: 비율 합이 0%라 {fallback['fallback']}로 나눔"
-            )
-        for note in calculator.get_share_rounding_notes(manager_name=active_manager):
-            if note["remainder"] > 0:
-                settlement_notes.append(
-                    f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 남은 {note['remainder']:,}원은 "
-                    f"가장 많이 지출한 {note['receiver']} 가족이 부담"
-                )
-            else:
-                settlement_notes.append(
-                    f"'{note['item_name']}' 비율 분담: 원 단위로 나누고 넘친 {-note['remainder']:,}원은 "
-                    f"가장 많이 지출한 {note['receiver']} 가족 분담금에서 차감"
-                )
         if manager_tail > 0:
             settlement_notes.append(
-                f"끝전 {manager_tail:,}원은 총무({active_manager})에게 남음: 총무에게 보낼 돈은 원 단위 올림, 돌려줄 돈은 내림"
+                f"[1/N·인원수 비례] 끝전 {manager_tail:,}원은 총무({active_manager})에게 남음: "
+                "총무에게 보낼 돈은 원 단위 올림, 돌려줄 돈은 내림"
             )
             print(f"[cyan]송금액 원 단위 끝전:[/cyan] {manager_tail:,}원 → 총무 {escape(active_manager)}")
+        for note in calculator.get_share_rounding_notes(manager_name=active_manager):
+            settlement_notes.append(
+                f"[비율 분담] '{note['item_name']}': 다른 가족 몫은 원 단위 올림, "
+                f"끝전 {note['tail']:,}원은 가장 많이 지출한 {note['receiver']} 가족에게 남음"
+            )
+        for fallback in calculator.get_zero_share_fallbacks():
+            settlement_notes.append(
+                f"[비율 분담] '{fallback['item_name']}': 비율 합이 0%라 {fallback['fallback']}로 나눔"
+            )
 
         # UI 레이아웃으로 상세 정보 표시
         tab1, tab2 = st.tabs(["💰 가족별 지출/정산 요약", "💸 최적 송금 경로 결과"])
@@ -844,7 +842,7 @@ with col_right:
 
                 # 총무(대표 수납자) 기준 받는 금액 / 돌려주는 금액 / 최종 남는 금액 표시 (숫자는 탭 위에서 계산)
                 # 끝전이 있으면 설명의 계산(선결제 - 분담금)과 최종 남는 금액이 그만큼 다르므로 함께 밝힘
-                tail_html = f" 여기에 원 단위 끝전 <strong>{manager_tail:,}원</strong>이 더해졌습니다." if manager_tail > 0 else ""
+                tail_html = f" 여기에 1/N·인원수 비례 분담의 원 단위 끝전 <strong>{manager_tail:,}원</strong>이 더해졌습니다." if manager_tail > 0 else ""
                 if manager_remaining >= 0:
                     explanation_html = f"💡 <strong>최종 남는 금액 설명:</strong> 총무({active_manager}) 가족이 선결제한 금액(<strong>{manager_spent:,}원</strong>)에서 본인 분담금(<strong>{manager_share:,}원</strong>)을 제외하고 <strong>최종적으로 돌려받는(회수하는) 본인 몫의 정산금</strong>입니다.{tail_html}"
                 else:
@@ -955,7 +953,7 @@ with col_right:
                 notice_text += f" - 받는 금액 합계: {manager_received:,}원\n"
                 notice_text += f" - 돌려주는 금액 합계: {manager_paid_out:,}원\n"
                 notice_text += f" - 총무에게 최종 남는 금액: {manager_remaining:,}원\n"
-                tail_text = f" 원 단위 끝전 {manager_tail:,}원 포함." if manager_tail > 0 else ""
+                tail_text = f" 1/N·인원수 비례 끝전 {manager_tail:,}원 포함." if manager_tail > 0 else ""
                 if manager_remaining >= 0:
                     notice_text += f"   (💡 총무가 선결제한 비용 {manager_spent:,}원에서 본인 분담금 {manager_share:,}원을 제외하고 최종 회수하는 정산금입니다.{tail_text})\n"
                 else:

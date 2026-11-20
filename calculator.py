@@ -82,7 +82,7 @@ class SettlementCalculator:
 
     def find_remainder_receiver(self, participants: List[str], manager_name: Optional[str] = None) -> str:
         """
-        비율 분담을 원 단위로 반올림한 뒤 남거나 넘친 금액을 떠안을 가족을 고릅니다.
+        비율 분담을 원 단위로 나눌 때 끝전이 남을(덜 내게 될) 가족을 고릅니다.
 
         선정 규칙:
             1. 해당 지출의 참여 가족 중 모임 전체 총 지불액이 가장 큰 가족
@@ -94,7 +94,7 @@ class SettlementCalculator:
             manager_name (Optional[str]): 대표 수납자(총무) 가족명. 동점 처리에만 사용.
 
         Returns:
-            str: 차액을 반영할 가족명
+            str: 끝전이 남을 가족명
         """
         paid = self.get_total_paid()
         top_amount = max(paid.get(p, 0) for p in participants)
@@ -108,20 +108,25 @@ class SettlementCalculator:
         """
         사용자 지정 비율 분담 지출의 가족별 분담액을 원 단위로 계산합니다.
 
+        1/N에서 끝전이 총무에게 남는 것과 같은 방식으로, 끝전은 '최다 지출 가족'에게 남깁니다.
+
         계산 순서:
             1. 각 참여 가족의 비율을 참여 가족 비율 합으로 나눠 정규화
                (합이 99.9%처럼 100%에서 조금 벗어나도 비율대로 지출액 전체를 나눔)
-            2. 가족별 분담액을 원 단위로 반올림(0.5원 이상 올림)
-            3. 반올림 때문에 생긴 차액(지출액 - 반올림한 분담액 합)을
-               find_remainder_receiver()가 고른 가족의 분담액에 더함 (차액이 음수면 빼짐)
+            2. find_remainder_receiver()로 끝전이 남을 가족을 고름
+               (비율이 0보다 큰 참여 가족 중 모임 전체 최다 지출 가족, 동점이면 총무)
+            3. 그 외 가족의 분담액은 원 단위 올림 → 같은 비율이면 모두 같은 금액
+            4. 끝전 받을 가족의 분담액 = 지출액 - 다른 가족 분담액 합 (정확한 몫보다 조금 덜 냄)
+               단, 그 가족의 비율이 아주 작아 이 값이 음수가 되는 드문 경우엔 다른 가족 몫을 내림으로 바꿈
 
         Args:
             exp (Expense): custom_shares가 있는 지출
-            manager_name (Optional[str]): 대표 수납자(총무). 차액 받을 가족이 동점일 때 사용.
+            manager_name (Optional[str]): 대표 수납자(총무). 최다 지출 가족이 동점일 때 사용.
 
         Returns:
             Tuple[Dict[str, int], int, Optional[str]]:
-                (가족별 분담액(차액 반영 후), 차액(원, 음수 가능), 차액을 반영한 가족 또는 None(차액 0원))
+                (가족별 분담액(합 = 지출액), 끝전(원, 끝전 받은 가족이 반올림한 정확한 몫보다 덜 낸 금액),
+                 끝전 받은 가족 또는 None(끝전 0원))
                 참여 가족 비율 합이 0 이하이면 ({}, 0, None)을 돌려줍니다.
                 이 경우 calculate_balances()는 기본 분담(1/N 또는 인원수 비례)으로 대신 나눕니다.
         """
@@ -130,36 +135,48 @@ class SettlementCalculator:
         if total_shares <= 0:
             return {}, 0, None
 
-        shares: Dict[str, int] = {
-            p: math.floor(shares_cfg.get(p, 0.0) / total_shares * exp.amount + 0.5)
-            for p in exp.participants
+        # 가족별 정확한 몫(float)
+        exact: Dict[str, float] = {
+            p: shares_cfg.get(p, 0.0) / total_shares * exp.amount for p in exp.participants
         }
-        remainder = exp.amount - sum(shares.values())
-        if remainder == 0:
-            return shares, 0, None
+        # 비율 0%인 가족은 끝전을 받을 수 없음 (분담액이 음수가 되지 않도록)
+        candidates = [p for p in exp.participants if shares_cfg.get(p, 0.0) > 0]
+        receiver = self.find_remainder_receiver(candidates, manager_name)
 
-        receiver = self.find_remainder_receiver(exp.participants, manager_name)
-        shares[receiver] += remainder
-        print(f"[cyan]비율 분담 원 단위 차액 반영:[/cyan] {escape(exp.item_name)} | 차액 {remainder:+,}원 → {escape(receiver)} (최다 지출 가족, 동점 시 총무)")
-        return shares, remainder, receiver
+        # 다른 가족 몫은 원 단위 올림 (float 오차로 1원이 더 붙지 않도록 TRANSFER_EPSILON 보정)
+        shares: Dict[str, int] = {
+            p: math.ceil(exact[p] - TRANSFER_EPSILON) for p in exp.participants if p != receiver
+        }
+        receiver_share = exp.amount - sum(shares.values())
+        if receiver_share < 0:
+            shares = {p: math.floor(exact[p] + TRANSFER_EPSILON) for p in shares}
+            receiver_share = exp.amount - sum(shares.values())
+        shares[receiver] = receiver_share
+
+        # 끝전 = 끝전 받은 가족의 (반올림한) 정확한 몫 - 실제 분담액
+        tail = math.floor(exact[receiver] + 0.5) - receiver_share
+        if tail == 0:
+            return shares, 0, None
+        print(f"[cyan]비율 분담 끝전:[/cyan] {escape(exp.item_name)} | 다른 가족 몫은 올림, 끝전 {tail:+,}원 → {escape(receiver)} (최다 지출 가족, 동점 시 총무)")
+        return shares, tail, receiver
 
     def get_share_rounding_notes(self, manager_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        원 단위 반올림 차액이 생긴 비율 분담 지출 목록을 돌려줍니다. (화면 안내·카카오톡 공지·이미지 주석용)
+        끝전이 최다 지출 가족에게 남은 비율 분담 지출 목록을 돌려줍니다. (화면 안내·카카오톡 공지·이미지 주석용)
 
         Args:
             manager_name (Optional[str]): 대표 수납자(총무). 정산 계산과 같은 값을 넘겨야 결과가 일치합니다.
 
         Returns:
-            List[Dict[str, Any]]: [{"item_name": 항목명, "remainder": 차액(원, 음수 가능), "receiver": 반영한 가족}, ...]
+            List[Dict[str, Any]]: [{"item_name": 항목명, "tail": 끝전(원, 1 이상), "receiver": 끝전이 남은 가족}, ...]
         """
         notes: List[Dict[str, Any]] = []
         for exp in self.expenses:
             if not exp.participants or not exp.custom_shares:
                 continue
-            _, remainder, receiver = self.split_custom_shares(exp, manager_name)
-            if remainder != 0 and receiver is not None:
-                notes.append({"item_name": exp.item_name, "remainder": remainder, "receiver": receiver})
+            _, tail, receiver = self.split_custom_shares(exp, manager_name)
+            if tail > 0 and receiver is not None:
+                notes.append({"item_name": exp.item_name, "tail": tail, "receiver": receiver})
         return notes
 
     @staticmethod
